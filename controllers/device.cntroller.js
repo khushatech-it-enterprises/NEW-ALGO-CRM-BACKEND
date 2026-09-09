@@ -423,7 +423,7 @@ const getDetailsOfAlgoClient = async (req, res) => {
     const AllDetails = await MainData.find(query)
       .populate("simDetails")
       .populate("deviceDetails")
-      .sort({ createdAt: -1 })
+      .sort({ registrationNumber: 1 })
       .skip(skip)
       .limit(limit);
 

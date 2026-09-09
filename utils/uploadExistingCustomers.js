@@ -12,7 +12,7 @@ mongoose.connect('mongodb+srv://riyazrahman_db_user:3qey9dM0Zui7GgVt@cluster0.ws
   try {
 
     // Load excel
-    const workbook = XLSX.readFile('./Book2.xlsx');
+    const workbook = XLSX.readFile('./Book3.xlsx');
     const sheetName = workbook.SheetNames[0];
     const sheet = workbook.Sheets[sheetName];
 
