@@ -170,6 +170,15 @@ exports.createSingleQSTClient = async (req, res) => {
       });
     }
 
+    if (companyShortName.trim().length < 5) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({
+        success: false,
+        message: "Company short name must be at least 5 characters",
+      });
+    }
+
     if (!billingCategory) {
       await session.abortTransaction();
       session.endSession();

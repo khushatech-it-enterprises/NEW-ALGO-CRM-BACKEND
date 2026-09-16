@@ -4127,7 +4127,7 @@ const createNewTicket = async (req, res) => {
 
     // Populate references for the response
     const populatedTicket = await Ticket.findById(savedTicket._id)
-      .populate("qstClientName", "companyShortName")
+      .populate("qstClientName", "companyShortName companyName")
       .populate("assignee", "name")
       .populate("taskType", "taskName")
       .populate("deviceType", "deviceName")
@@ -4508,7 +4508,7 @@ const getAllTickets = async (req, res) => {
     // Get paginated results also send isTechnicianPaymentSuccessDate in below
     const tickets = await Ticket.find(query)
       .select("+isTechnicianPaymentSuccessDate +annexturepaid") // Explicitly include the field
-      .populate("qstClientName", "companyShortName")
+      .populate("qstClientName", "companyShortName companyName")
       .populate("assignee", "name _id")
       .populate("taskType", "taskName")
       .populate("deviceType", "deviceName")
@@ -4774,12 +4774,14 @@ const getTicketById = async (req, res) => {
 
     // Find the ticket and populate all referenced fields
     const ticket = await Ticket.findById(ticketId)
-      .populate("qstClientName", "companyShortName _id")
+      .populate("qstClientName", "companyShortName companyName _id")
       .populate("taskType", "taskName _id")
       .populate("deviceType", "deviceName _id")
       .populate("assignee", "name _id")
-      .populate("technician", "name accountNumber ifscCode _id")
+      .populate("technician", "name nickName accountNumber ifscCode _id")
       .populate("creator", "name _id")
+      .populate("issueFoundRef", "issueFoundName _id")
+      .populate("resolutionRef", "ResolutionName _id")
       .lean(); // Convert to plain JavaScript object
 
     if (!ticket) {
