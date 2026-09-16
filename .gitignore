@@ -17,6 +17,7 @@ Thumbs.db
 # Environment files
 .env
 .env.*
+Steps.txt
 
 # Build output
 dist/
