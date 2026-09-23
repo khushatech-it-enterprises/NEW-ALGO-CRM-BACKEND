@@ -2864,3 +2864,142 @@ exports.addAccessoriesToVehicle = async (req, res) => {
     });
   }
 };
+
+
+// ── Wiring Verification: Proxy AlgoTrack API call ──────────────────────────────
+// This proxies the external AlgoTrack lastdata APIs on behalf of the technician
+// to avoid CORS issues from the frontend.
+exports.proxyWiringCheck = async (req, res) => {
+  try {
+    const { checkType, unitNumber, serverName, DeviceType } = req.body;
+
+    // Validate checkType
+    const validCheckTypes = {
+      ignition: "get-last-ignition",
+      mainPowerSupply: "get-last-mainpowersupply",
+      latLong: "get-last-latlong",
+      pcsGps: "get-last-pcsgps",
+    };
+
+    if (!validCheckTypes[checkType]) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid checkType. Must be one of: ${Object.keys(validCheckTypes).join(", ")}`,
+      });
+    }
+
+    if (!unitNumber) {
+      return res.status(400).json({
+        success: false,
+        message: "unitNumber is required",
+      });
+    }
+
+    const endpoint = validCheckTypes[checkType];
+    const apiUrl = `https://algotrack.in/AlgoCRMAPI/api/lastdata/${endpoint}`;
+
+    const response = await fetch(apiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        unitNumber,
+        serverName: serverName || "Algotrack",
+        DeviceType: DeviceType || "",
+      }),
+    });
+
+    const data = await response.json();
+
+    return res.status(response.ok ? 200 : 502).json({
+      success: response.ok,
+      message: response.ok
+        ? `${checkType} check completed`
+        : `${checkType} check failed from AlgoTrack`,
+      data,
+    });
+  } catch (error) {
+    console.error("proxyWiringCheck error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to proxy wiring check API",
+      error: error.message,
+    });
+  }
+};
+
+
+// ── Wiring Verification: Save result to ticket ─────────────────────────────────
+// Saves the API response for a specific check type to the ticket's
+// vehicleNumbers[].wiringVerification field.
+exports.saveWiringVerification = async (req, res) => {
+  try {
+    const { ticketId, vehicleId, checkType, response: apiResponse, status } = req.body;
+
+    // Validate inputs
+    if (!ticketId || !vehicleId || !checkType) {
+      return res.status(400).json({
+        success: false,
+        message: "ticketId, vehicleId, and checkType are required",
+      });
+    }
+
+    const validCheckTypes = ["ignition", "mainPowerSupply", "latLong", "pcsGps"];
+    if (!validCheckTypes.includes(checkType)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid checkType. Must be one of: ${validCheckTypes.join(", ")}`,
+      });
+    }
+
+    const validStatuses = ["pending", "success", "failed"];
+    if (status && !validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid status. Must be one of: ${validStatuses.join(", ")}`,
+      });
+    }
+
+    // Build the update path dynamically
+    const updatePath = `vehicleNumbers.$.wiringVerification.${checkType}`;
+
+    const ticket = await Ticket.findOneAndUpdate(
+      {
+        _id: ticketId,
+        "vehicleNumbers._id": vehicleId,
+      },
+      {
+        $set: {
+          [`${updatePath}.status`]: status || "success",
+          [`${updatePath}.response`]: apiResponse || null,
+          [`${updatePath}.verifiedAt`]: new Date(),
+        },
+      },
+      { new: true }
+    );
+
+    if (!ticket) {
+      return res.status(404).json({
+        success: false,
+        message: "Ticket or vehicle not found",
+      });
+    }
+
+    // Find the updated vehicle to return its verification state
+    const updatedVehicle = ticket.vehicleNumbers.find(
+      (v) => v._id.toString() === vehicleId
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: `${checkType} verification saved successfully`,
+      wiringVerification: updatedVehicle?.wiringVerification || null,
+    });
+  } catch (error) {
+    console.error("saveWiringVerification error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to save wiring verification",
+      error: error.message,
+    });
+  }
+};

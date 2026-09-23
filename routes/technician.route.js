@@ -126,6 +126,12 @@ router.get("/:id/spare-inventory", technicianController.getTechnicianSpareInvent
 // Mark / unmark a single vehicle as done by the technician
 router.patch("/mark-vehicle-done", technicianController.markVehicleAsDone);
 
+// Wiring verification: proxy AlgoTrack API call (avoids CORS from technician page)
+router.post("/wiring-check", technicianController.proxyWiringCheck);
+
+// Wiring verification: save result to ticket's vehicleNumbers
+router.patch("/save-wiring-verification", technicianController.saveWiringVerification);
+
 
 
 module.exports = router;

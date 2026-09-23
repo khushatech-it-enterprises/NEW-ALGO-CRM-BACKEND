@@ -122,7 +122,31 @@ const ticketSchema = new mongoose.Schema({
       isDone: {
         type: Boolean,
         default: false
-      } // technician marks this vehicle as done (work completed on-site)
+      }, // technician marks this vehicle as done (work completed on-site)
+
+      // Wiring verification results from AlgoTrack APIs
+      wiringVerification: {
+        ignition: {
+          status: { type: String, enum: ['pending', 'success', 'failed'], default: 'pending' },
+          response: { type: mongoose.Schema.Types.Mixed, default: null },
+          verifiedAt: { type: Date, default: null }
+        },
+        mainPowerSupply: {
+          status: { type: String, enum: ['pending', 'success', 'failed'], default: 'pending' },
+          response: { type: mongoose.Schema.Types.Mixed, default: null },
+          verifiedAt: { type: Date, default: null }
+        },
+        latLong: {
+          status: { type: String, enum: ['pending', 'success', 'failed'], default: 'pending' },
+          response: { type: mongoose.Schema.Types.Mixed, default: null },
+          verifiedAt: { type: Date, default: null }
+        },
+        pcsGps: {
+          status: { type: String, enum: ['pending', 'success', 'failed'], default: 'pending' },
+          response: { type: mongoose.Schema.Types.Mixed, default: null },
+          verifiedAt: { type: Date, default: null }
+        }
+      }
 
     }
   ],
