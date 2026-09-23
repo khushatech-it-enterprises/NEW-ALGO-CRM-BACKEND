@@ -14,7 +14,7 @@ const welcomeTemplateOfQSTClients = (name, email, password, loginUrl) => {
           <td align="center" style="padding: 30px;">
             <table width="600" cellpadding="0" cellspacing="0" role="presentation" style="background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
               <tr>
-                <td style="background-color: #facc15; color: #111827; text-align: center; padding: 30px;">
+                <td style="background-color: #d93024; color: #ffffff; text-align: center; padding: 30px;">
                   <h1 style="margin: 0;">Welcome to AlgoMatix</h1>
                 </td>
               </tr>
@@ -31,7 +31,7 @@ const welcomeTemplateOfQSTClients = (name, email, password, loginUrl) => {
                   <p style="font-size: 16px;">Please use the button below to log in to your account:</p>
                   
                   <div style="text-align: center; margin: 30px 0;">
-                    <a href="${loginUrl}" style="background-color: #facc15; color: #111827; padding: 14px 28px; text-decoration: none; border-radius: 5px; font-size: 16px; font-weight: bold;">
+                    <a href="${loginUrl}" style="background-color: #d93024; color: #ffffff; padding: 14px 28px; text-decoration: none; border-radius: 5px; font-size: 16px; font-weight: bold;">
                       Login Now
                     </a>
                   </div>
