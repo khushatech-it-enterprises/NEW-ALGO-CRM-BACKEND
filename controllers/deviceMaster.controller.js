@@ -1173,6 +1173,104 @@ exports.bulkCreateDeviceMasters = async (req, res) => {
   }
 };
 
+// ✅ Get stock device count grouped by deviceType
+exports.getStockCountByType = async (req, res) => {
+  try {
+    const counts = await DeviceMasterModel.aggregate([
+      { $match: { status: "stock" } },
+      {
+        $group: {
+          _id: "$deviceType",
+          count: { $sum: 1 },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]);
+
+    // Transform to { deviceType, count } array
+    const result = counts.map((c) => ({
+      deviceType: c._id || "Unknown",
+      count: c.count,
+    }));
+
+    res.status(200).json({ success: true, data: result });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ✅ Bulk assign stock devices to R&D team member
+exports.bulkAssignToRd = async (req, res) => {
+  try {
+    const { deviceType, quantity, assignedTo } = req.body;
+
+    if (!deviceType || !quantity || !assignedTo) {
+      return res.status(400).json({
+        success: false,
+        message: "deviceType, quantity, and assignedTo are required",
+      });
+    }
+
+    const qty = parseInt(quantity, 10);
+    if (isNaN(qty) || qty <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "quantity must be a positive number",
+      });
+    }
+
+    // 1. Find the first N stock devices of the given type
+    const devices = await DeviceMasterModel.find({
+      status: "stock",
+      deviceType: deviceType,
+    })
+      .sort({ createdAt: 1 })
+      .limit(qty)
+      .select("_id")
+      .lean();
+
+    if (devices.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: `No stock devices found for type "${deviceType}"`,
+      });
+    }
+
+    const deviceIds = devices.map((d) => d._id);
+    const changedBy = req.user?.name || req.user?.email || "system";
+
+    // 2. Bulk update all selected devices
+    await DeviceMasterModel.updateMany(
+      { _id: { $in: deviceIds } },
+      {
+        $set: {
+          status: "testing",
+          assignedTo: new mongoose.Types.ObjectId(assignedTo),
+          assignedToModel: "Employee",
+        },
+        $push: {
+          statusHistory: {
+            status: "testing",
+            changedAt: new Date(),
+            changedBy: `${changedBy} - Bulk Assign to R&D`,
+          },
+        },
+      }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: `${deviceIds.length} devices assigned to R&D successfully`,
+      assignedCount: deviceIds.length,
+      requestedCount: qty,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 exports.deleteDeviceMasters = async (req, res) => {
   try {
     const { id } = req.params;

@@ -59,6 +59,22 @@ router.put(
   rdTestingController.rdTestRepairableDevice
 );
 
+
+// Bulk R&D assign — get stock counts by device type
+router.get(
+  "/stock-count-by-type",
+  isAuthenticated,
+  deviceMasterController.getStockCountByType
+);
+
+// Bulk R&D assign — assign N stock devices to R&D member
+router.post(
+  "/bulk-assign-rd",
+  isAuthenticated,
+  authorizeRoles("superAdmin", "admin", "store"),
+  deviceMasterController.bulkAssignToRd
+);
+
 module.exports = router;
 
 
