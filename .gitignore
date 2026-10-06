@@ -18,6 +18,7 @@ Thumbs.db
 .env
 .env.*
 Steps.txt
+Migration
 
 # Build output
 dist/
