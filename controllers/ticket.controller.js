@@ -6933,7 +6933,7 @@ function calculateTotalCustomerCharges(ticket) {
 
 const ExportTicketDataByDateRange = async (req, res) => {
   try {
-    const { fromDate, toDate } = req.query;
+    const { fromDate, toDate, dateType } = req.query;
 
     if (!fromDate || !toDate) {
       return res.status(400).json({
@@ -6945,13 +6945,32 @@ const ExportTicketDataByDateRange = async (req, res) => {
     const from = dayjs(fromDate).startOf("day").toDate();
     const to = dayjs(toDate).endOf("day").toDate();
 
-    const tickets = await Ticket.find({
-      ticketAvailabilityDate: {
-        $gte: from,
-        $lte: to,
-      },
-    })
-      .populate("qstClientName", "companyShortName")
+    let query = {};
+    if (dateType === "createdAt" || dateType === "creationDate") {
+      query.createdAt = { $gte: from, $lte: to };
+    } else if (dateType === "dueDate") {
+      query.dueDate = { $gte: from, $lte: to };
+    } else if (
+      dateType === "ticketAvailabilityDate" ||
+      dateType === "vehicleAvailability"
+    ) {
+      query.ticketAvailabilityDate = { $gte: from, $lte: to };
+    } else {
+      // Default: match by createdAt, dueDate, OR ticketAvailabilityDate in range
+      query.$or = [
+        { createdAt: { $gte: from, $lte: to } },
+        { dueDate: { $gte: from, $lte: to } },
+        { ticketAvailabilityDate: { $gte: from, $lte: to } },
+      ];
+    }
+
+    // Role-based filtering if logged in as CSE
+    if (req.user && req.user.role === "cse") {
+      query.assignee = req.user._id;
+    }
+
+    const tickets = await Ticket.find(query)
+      .populate("qstClientName", "companyShortName companyName")
       .populate("assignee", "name")
       .populate("taskType", "taskName")
       .populate("deviceType", "deviceName")

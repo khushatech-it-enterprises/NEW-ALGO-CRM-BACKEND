@@ -446,10 +446,99 @@ const login = async (req, res) => {
   }
 };
 
+const changePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword, confirmPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Current password and new password are required.",
+      });
+    }
+
+    if (confirmPassword !== undefined && newPassword !== confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "New password and confirmation password do not match.",
+      });
+    }
+
+    if (currentPassword === newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "New password cannot be the same as current password.",
+      });
+    }
+
+    const validation = passwordValidator(newPassword);
+    if (!validation.isValid) {
+      return res.status(400).json({
+        success: false,
+        message: validation.message,
+      });
+    }
+
+    const userId = req.user?._id;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "User not authenticated.",
+      });
+    }
+
+    let targetUser = await Employee.findById(userId);
+    let isEmployee = true;
+
+    if (!targetUser) {
+      targetUser = await User.findById(userId);
+      isEmployee = false;
+    }
+
+    if (!targetUser) {
+      return res.status(404).json({
+        success: false,
+        message: "User account not found.",
+      });
+    }
+
+    const isMatch = await bcrypt.compare(currentPassword, targetUser.password);
+    if (!isMatch) {
+      return res.status(400).json({
+        success: false,
+        message: "Current password is incorrect.",
+      });
+    }
+
+    const hashedPassword = await bcrypt.hash(validation.trimmedPassword, 10);
+    if (isEmployee) {
+      targetUser.password = hashedPassword;
+      await targetUser.save();
+    } else {
+      targetUser.password = validation.trimmedPassword;
+      await targetUser.save();
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Password changed successfully.",
+    });
+  } catch (error) {
+    console.error("Change password error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error during password change.",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
+
 module.exports = {
   login,
   forgotPassword,
   resetPassword,
   validateResetToken,
   createUser,
+  changePassword,
 };
+
