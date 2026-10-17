@@ -60,11 +60,19 @@ router.put(
 );
 
 
-// Bulk R&D assign — get stock counts by device type
-router.get(
-  "/stock-count-by-type",
+// Bulk assign — get stock counts grouped by device model
+// :clientId = a QstClient ObjectId (filters via MainData store pairing), or "all" for unfiltered
+router.post(
+  "/stock-count-by-type/:clientId",
   isAuthenticated,
   deviceMasterController.getStockCountByType
+);
+
+// Bulk assign — preview actual device IDs for a given model + limit
+router.get(
+  "/stock-devices-by-model",
+  isAuthenticated,
+  deviceMasterController.getStockDevicesByModel
 );
 
 // Bulk R&D assign — assign N stock devices to R&D member
@@ -74,6 +82,15 @@ router.post(
   authorizeRoles("superAdmin", "admin", "store"),
   deviceMasterController.bulkAssignToRd
 );
+
+// Bulk multi-status assign — assign N stock devices to any status + person
+router.post(
+  "/bulk-assign-status",
+  isAuthenticated,
+  authorizeRoles("superAdmin", "admin", "store"),
+  deviceMasterController.bulkAssignStatus
+);
+
 
 module.exports = router;
 

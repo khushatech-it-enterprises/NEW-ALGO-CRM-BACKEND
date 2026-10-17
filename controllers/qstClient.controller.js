@@ -268,8 +268,8 @@ exports.createSingleQSTClient = async (req, res) => {
       billingCategory,
       keyClient,
       qstClientCreator: req?.user?._id || req.body.employeeId,
-      cse,
-      zone,
+      cse: cse || undefined,
+      zone: zone || undefined,
     });
 
     const savedClient = await newClient.save({ session });
@@ -1275,8 +1275,8 @@ exports.updateSingleQSTClient = async (req, res) => {
     client.keyClient = keyClient;
     client.billingCategory = billingCategory;
     client.qstClientCreator = employeeId || client.qstClientCreator;
-    client.zone = zone;
-    client.cse = cse;
+    client.zone = zone || null;
+    client.cse = cse || null;
 
     // Handle contacts if provided
     if (contacts && contacts.length > 0) {
