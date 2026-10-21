@@ -1236,7 +1236,7 @@ exports.getStockDevicesByModel = async (req, res) => {
       return res.status(400).json({ success: false, message: "deviceModel is required" });
     }
 
-    const qty = Math.min(parseInt(limit, 10) || 50, 20000);
+    const qty = Math.min(parseInt(limit, 10) || 500, 20000);
 
     // Build base filter
     const deviceFilter = { status: "stock", deviceModel };
@@ -1253,7 +1253,7 @@ exports.getStockDevicesByModel = async (req, res) => {
     }
 
     const devices = await DeviceMasterModel.find(deviceFilter)
-      .sort({ createdAt: 1 })
+      .sort({ createdAt: -1 })
       .limit(qty)
       .select("deviceId deviceModel deviceType deviceManufacturer createdAt")
       .lean();
@@ -1343,7 +1343,7 @@ exports.bulkAssignToRd = async (req, res) => {
 // For "testing" status, clientId is NOT required (fresh imported devices don't have a client)
 exports.bulkAssignStatus = async (req, res) => {
   try {
-    const { deviceModel, quantity, status, assignedTo, clientId } = req.body;
+    const { deviceModel, quantity, status, assignedTo, clientId, deviceIds: manualDeviceIds } = req.body;
 
     const VALID_STATUSES = [
       "testing",
@@ -1353,10 +1353,10 @@ exports.bulkAssignStatus = async (req, res) => {
       "foc",
     ];
 
-    if (!deviceModel || !quantity || !status || !assignedTo) {
+    if (!status || !assignedTo) {
       return res.status(400).json({
         success: false,
-        message: "deviceModel, quantity, status, and assignedTo are required",
+        message: "status and assignedTo are required",
       });
     }
 
@@ -1367,45 +1367,76 @@ exports.bulkAssignStatus = async (req, res) => {
       });
     }
 
-    const qty = parseInt(quantity, 10);
-    if (isNaN(qty) || qty <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: "quantity must be a positive number",
-      });
-    }
-
     // Determine assignedToModel based on status
     const assignedToModel = getAssignedToModelFromStatus(status);
 
-    // Build device filter — optionally scoped to client's MainData-linked devices
-    // For "testing" status, clientId is optional (fresh devices may not have a client)
-    const deviceFilter = { status: "stock", deviceModel };
-    if (clientId && clientId !== "all" && mongoose.Types.ObjectId.isValid(clientId)) {
-      const MainData = require("../models/mainData.model");
-      const storeRecords = await MainData.find(
-        { company: new mongoose.Types.ObjectId(clientId), deviceDetails: { $ne: null } },
-        { deviceDetails: 1, _id: 0 }
-      ).lean();
-      const linkedIds = storeRecords.map((r) => r.deviceDetails).filter(Boolean);
-      deviceFilter._id = { $in: linkedIds };
+    let deviceIds;
+
+    // Mode 1: Explicit device IDs from checkbox selection
+    if (manualDeviceIds && Array.isArray(manualDeviceIds) && manualDeviceIds.length > 0) {
+      // Verify all provided IDs are valid stock devices
+      const validDevices = await DeviceMasterModel.find({
+        _id: { $in: manualDeviceIds.map((id) => new mongoose.Types.ObjectId(id)) },
+        status: "stock",
+      })
+        .select("_id")
+        .lean();
+
+      if (validDevices.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "None of the selected devices are in stock",
+        });
+      }
+
+      deviceIds = validDevices.map((d) => d._id);
+    }
+    // Mode 2: Auto-select by model + quantity (legacy / fallback)
+    else {
+      if (!deviceModel || !quantity) {
+        return res.status(400).json({
+          success: false,
+          message: "Either deviceIds[] or (deviceModel + quantity) are required",
+        });
+      }
+
+      const qty = parseInt(quantity, 10);
+      if (isNaN(qty) || qty <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: "quantity must be a positive number",
+        });
+      }
+
+      // Build device filter — optionally scoped to client's MainData-linked devices
+      const deviceFilter = { status: "stock", deviceModel };
+      if (clientId && clientId !== "all" && mongoose.Types.ObjectId.isValid(clientId)) {
+        const MainData = require("../models/mainData.model");
+        const storeRecords = await MainData.find(
+          { company: new mongoose.Types.ObjectId(clientId), deviceDetails: { $ne: null } },
+          { deviceDetails: 1, _id: 0 }
+        ).lean();
+        const linkedIds = storeRecords.map((r) => r.deviceDetails).filter(Boolean);
+        deviceFilter._id = { $in: linkedIds };
+      }
+
+      // Find the first N matching stock devices (newest first)
+      const devices = await DeviceMasterModel.find(deviceFilter)
+        .sort({ createdAt: -1 })
+        .limit(qty)
+        .select("_id")
+        .lean();
+
+      if (devices.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: `No stock devices found for model "${deviceModel}"${clientId && clientId !== "all" ? " for this client" : ""}`,
+        });
+      }
+
+      deviceIds = devices.map((d) => d._id);
     }
 
-    // Find the first N matching stock devices (oldest first)
-    const devices = await DeviceMasterModel.find(deviceFilter)
-      .sort({ createdAt: 1 })
-      .limit(qty)
-      .select("_id")
-      .lean();
-
-    if (devices.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: `No stock devices found for model "${deviceModel}"${clientId && clientId !== "all" ? " for this client" : ""}`,
-      });
-    }
-
-    const deviceIds = devices.map((d) => d._id);
     const changedBy = req.user?.name || req.user?.email || "system";
 
     // Bulk update all selected devices
@@ -1431,7 +1462,6 @@ exports.bulkAssignStatus = async (req, res) => {
       success: true,
       message: `${deviceIds.length} devices assigned successfully`,
       assignedCount: deviceIds.length,
-      requestedCount: qty,
       status: status,
     });
   } catch (error) {
