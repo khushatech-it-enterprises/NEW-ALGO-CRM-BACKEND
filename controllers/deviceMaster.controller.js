@@ -765,11 +765,12 @@ exports.updateDeviceMasters = async (req, res) => {
       } else {
         device.assignedToModel = getAssignedToModelFromStatus(incomingStatus);
 
-        // if needsAssignedTo but missing
+        // For "testing" (R&D), assignedTo is the R&D team member — still required
+        // but NO client/customer dependency is needed
         if (!device.assignedTo) {
           return res.status(400).json({
             success: false,
-            message: "assignedTo is required for this status",
+            message: `assignedTo is required for status "${incomingStatus}"`,
           });
         }
       }
@@ -1174,18 +1175,17 @@ exports.bulkCreateDeviceMasters = async (req, res) => {
 };
 
 // ✅ Get stock device count grouped by deviceModel
-// If clientId is provided, only count devices linked to that client via MainData store records
+// If clientId is provided (and is a valid ObjectId, not "all"), only count devices linked to that client via MainData store records
+// If clientId is "all" or missing, return ALL stock devices grouped by model
 exports.getStockCountByType = async (req, res) => {
   const { clientId } = req.params;
   console.log("Received Client ID : ", clientId);
   try {
-    const MainData = require("../models/mainData.model");
-
     let matchStage = { status: "stock" };
 
-    if (clientId && mongoose.Types.ObjectId.isValid(clientId)) {
-      // Step 1: Find all MainData store records for this client
-      // and collect the deviceDetails IDs linked to them
+    // Only filter by client if a valid ObjectId was provided (not "all")
+    if (clientId && clientId !== "all" && mongoose.Types.ObjectId.isValid(clientId)) {
+      const MainData = require("../models/mainData.model");
       const storeRecords = await MainData.find(
         { company: new mongoose.Types.ObjectId(clientId), deviceDetails: { $ne: null } },
         { deviceDetails: 1, _id: 0 }
@@ -1197,7 +1197,6 @@ exports.getStockCountByType = async (req, res) => {
 
       console.log(`Client ${clientId} has ${linkedDeviceIds.length} linked device(s) in store`);
 
-      // Step 2: Match only those device IDs that are in "stock" status
       matchStage = {
         status: "stock",
         _id: { $in: linkedDeviceIds },
@@ -1242,8 +1241,8 @@ exports.getStockDevicesByModel = async (req, res) => {
     // Build base filter
     const deviceFilter = { status: "stock", deviceModel };
 
-    // Narrow to client's linked devices via MainData if clientId provided
-    if (clientId && mongoose.Types.ObjectId.isValid(clientId)) {
+    // Narrow to client's linked devices via MainData if clientId provided (and is not "all")
+    if (clientId && clientId !== "all" && mongoose.Types.ObjectId.isValid(clientId)) {
       const MainData = require("../models/mainData.model");
       const storeRecords = await MainData.find(
         { company: new mongoose.Types.ObjectId(clientId), deviceDetails: { $ne: null } },
@@ -1341,6 +1340,7 @@ exports.bulkAssignToRd = async (req, res) => {
 
 // ✅ Bulk assign stock devices to any status (sold to customer, with technician, with cse, foc, testing/r&d)
 // clientId (optional) — when provided, restricts device selection to that client's MainData-linked devices
+// For "testing" status, clientId is NOT required (fresh imported devices don't have a client)
 exports.bulkAssignStatus = async (req, res) => {
   try {
     const { deviceModel, quantity, status, assignedTo, clientId } = req.body;
@@ -1379,8 +1379,9 @@ exports.bulkAssignStatus = async (req, res) => {
     const assignedToModel = getAssignedToModelFromStatus(status);
 
     // Build device filter — optionally scoped to client's MainData-linked devices
+    // For "testing" status, clientId is optional (fresh devices may not have a client)
     const deviceFilter = { status: "stock", deviceModel };
-    if (clientId && mongoose.Types.ObjectId.isValid(clientId)) {
+    if (clientId && clientId !== "all" && mongoose.Types.ObjectId.isValid(clientId)) {
       const MainData = require("../models/mainData.model");
       const storeRecords = await MainData.find(
         { company: new mongoose.Types.ObjectId(clientId), deviceDetails: { $ne: null } },
@@ -1400,7 +1401,7 @@ exports.bulkAssignStatus = async (req, res) => {
     if (devices.length === 0) {
       return res.status(400).json({
         success: false,
-        message: `No stock devices found for model "${deviceModel}"${clientId ? " for this client" : ""}`,
+        message: `No stock devices found for model "${deviceModel}"${clientId && clientId !== "all" ? " for this client" : ""}`,
       });
     }
 
