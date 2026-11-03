@@ -38,6 +38,17 @@ router.get(
   maindashboardcontroller.getTicketsByTechnicianAndDateRange
 );
 
+router.get(
+  "/payroll-technicians-open-tickets-counts",
+  isAuthenticated,
+  maindashboardcontroller.getPayrollTechniciansOpenTicketsCounts
+);
+router.get(
+  "/payroll-technicians-open-tickets",
+  isAuthenticated,
+  maindashboardcontroller.getPayrollTechniciansOpenTickets
+);
+
 router.get("/monthly-margins", maindashboardcontroller.getMonthlyMargins);
 
 router.get(

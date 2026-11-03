@@ -2905,6 +2905,250 @@ const getTicketsByTechnicianAndDateRange = async (req, res) => {
   }
 };
 
+// ==========================================
+// PAYROLL TECHNICIANS OPEN TICKETS / VEHICLES
+// ==========================================
+const getPayrollTechniciansOpenTicketsCounts = async (req, res) => {
+  try {
+    const payrollTechnicians = await Technician.find({
+      technicianCategoryType: "payroll",
+    }).select("_id name nickName salary");
+
+    if (!payrollTechnicians.length) {
+      return res.status(404).json({
+        success: false,
+        message: "No payroll technicians found",
+      });
+    }
+
+    const techIds = payrollTechnicians.map((t) => t._id);
+    const dateRanges = getDateRangesForPayrollTechniciansData();
+
+    // Tickets that are not marked as work done or closed
+    const openStatusMatch = {
+      ticketStatus: {
+        $nin: [
+          "work done",
+          "closed",
+          "Work Done",
+          "Closed",
+          "WORK DONE",
+          "CLOSED",
+          "Cancelled",
+          "Cancelled Ticket"
+        ],
+      },
+    };
+
+    const ticketData = await Ticket.aggregate([
+      {
+        $match: {
+          technician: { $in: techIds },
+          ...openStatusMatch,
+        },
+      },
+      {
+        $project: {
+          technician: 1,
+          noOfVehicles: 1,
+          dueDate: 1,
+          ticketAvailabilityDate: 1,
+          createdAt: 1,
+          ticketStatus: 1,
+        },
+      },
+    ]);
+
+    const resultMap = {};
+    payrollTechnicians.forEach((tech) => {
+      resultMap[tech._id.toString()] = {
+        _id: tech._id,
+        technicianName: tech.name,
+        techniciannickName: tech.nickName,
+        today: 0,
+        yesterday: 0,
+        thisWeek: 0,
+        lastWeek: 0,
+        thisMonth: 0,
+        lastMonth: 0,
+      };
+    });
+
+    ticketData.forEach((ticket) => {
+      if (!ticket.technician) return;
+      const techId = ticket.technician.toString();
+      const techObj = resultMap[techId];
+      if (!techObj) return;
+
+      const rawDate =
+        ticket.dueDate || ticket.ticketAvailabilityDate || ticket.createdAt;
+      if (!rawDate) return;
+      const date = new Date(rawDate);
+      const countValue = 1; // 1 per ticket for "No. of open tickets"
+
+      // ---- TODAY
+      if (date >= dateRanges.today) {
+        techObj.today += countValue;
+      }
+
+      // ---- YESTERDAY
+      if (date >= dateRanges.yesterday && date < dateRanges.today) {
+        techObj.yesterday += countValue;
+      }
+
+      // ---- THIS WEEK
+      if (date >= dateRanges.thisWeekStart && date <= dateRanges.thisWeekEnd) {
+        techObj.thisWeek += countValue;
+      }
+
+      // ---- LAST WEEK
+      if (date >= dateRanges.lastWeekStart && date <= dateRanges.lastWeekEnd) {
+        techObj.lastWeek += countValue;
+      }
+
+      // ---- THIS MONTH
+      if (
+        date >= dateRanges.thisMonthStart &&
+        date <= dateRanges.thisMonthEnd
+      ) {
+        techObj.thisMonth += countValue;
+      }
+
+      // ---- LAST MONTH
+      if (
+        date >= dateRanges.lastMonthStart &&
+        date <= dateRanges.lastMonthEnd
+      ) {
+        techObj.lastMonth += countValue;
+      }
+    });
+
+    const result = Object.values(resultMap);
+
+    res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    console.error("Error fetching payroll technicians open tickets counts:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+const getPayrollTechniciansOpenTickets = async (req, res) => {
+  try {
+    const { technicianId, period, startDate, endDate } = req.query;
+
+    if (!technicianId || !period) {
+      return res.status(400).json({
+        success: false,
+        message: "Technician ID and period are required",
+      });
+    }
+
+    let dateCond = null;
+    const dateRanges = getDateRangesForPayrollTechniciansData();
+
+    switch (period) {
+      case "today":
+        dateCond = { $gte: dateRanges.today };
+        break;
+      case "yesterday":
+        dateCond = {
+          $gte: dateRanges.yesterday,
+          $lt: dateRanges.today,
+        };
+        break;
+      case "thisWeek":
+        dateCond = {
+          $gte: dateRanges.thisWeekStart,
+          $lte: dateRanges.thisWeekEnd,
+        };
+        break;
+      case "lastWeek":
+        dateCond = {
+          $gte: dateRanges.lastWeekStart,
+          $lte: dateRanges.lastWeekEnd,
+        };
+        break;
+      case "thisMonth":
+        dateCond = {
+          $gte: dateRanges.thisMonthStart,
+          $lte: dateRanges.thisMonthEnd,
+        };
+        break;
+      case "lastMonth":
+        dateCond = {
+          $gte: dateRanges.lastMonthStart,
+          $lte: dateRanges.lastMonthEnd,
+        };
+        break;
+      default:
+        if (startDate && endDate) {
+          dateCond = {
+            $gte: new Date(startDate),
+            $lte: new Date(endDate),
+          };
+        }
+    }
+
+    const dateQuery = dateCond
+      ? {
+        $or: [
+          { dueDate: dateCond },
+          { ticketAvailabilityDate: dateCond },
+          { createdAt: dateCond },
+        ],
+      }
+      : {};
+
+    const openStatusMatch = {
+      ticketStatus: {
+        $nin: [
+          "work done",
+          "closed",
+          "Work Done",
+          "Closed",
+          "WORK DONE",
+          "CLOSED",
+        ],
+      },
+    };
+
+    const tickets = await Ticket.find({
+      technician: technicianId,
+      ...dateQuery,
+      ...openStatusMatch,
+    })
+      .populate("qstClientName", "companyShortName companyName")
+      .populate("technician", "name nickName")
+      .populate("taskType", "taskName")
+      .select(
+        "ticketSKUId vehicleNumbers noOfVehicles subjectLine description dueDate ticketAvailabilityDate technician taskType ticketStatus createdAt"
+      )
+      .sort({ dueDate: -1, ticketAvailabilityDate: -1, createdAt: -1 });
+
+    res.json({
+      success: true,
+      data: tickets,
+      count: tickets.length,
+      totalVehicles: tickets.reduce(
+        (sum, ticket) => sum + (ticket.noOfVehicles || 0),
+        0
+      ),
+    });
+  } catch (error) {
+    console.error("Error fetching open tickets by technician:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
 const getCSEDashboardStats = async (req, res) => {
   try {
     // Get the CSE user ID from authenticated user
@@ -3355,28 +3599,28 @@ const getInventoryTypeStats = async (req, res) => {
       // Temp — device
       DeviceMasterModel.countDocuments({
         $or: [
-          { deviceType:  { $regex: /temp/i } },
+          { deviceType: { $regex: /temp/i } },
           { deviceModel: { $regex: /temp/i } },
         ],
       }),
       // Temp — accessory
       AccessoryMasterModel.countDocuments({
         $or: [
-          { accessoryType:  { $regex: /temp/i } },
+          { accessoryType: { $regex: /temp/i } },
           { accessoryModel: { $regex: /temp/i } },
         ],
       }),
       // Fuel — device
       DeviceMasterModel.countDocuments({
         $or: [
-          { deviceType:  { $regex: /fuel/i } },
+          { deviceType: { $regex: /fuel/i } },
           { deviceModel: { $regex: /fuel/i } },
         ],
       }),
       // Fuel — accessory
       AccessoryMasterModel.countDocuments({
         $or: [
-          { accessoryType:  { $regex: /fuel/i } },
+          { accessoryType: { $regex: /fuel/i } },
           { accessoryModel: { $regex: /fuel/i } },
         ],
       }),
@@ -3391,8 +3635,8 @@ const getInventoryTypeStats = async (req, res) => {
     res.status(200).json({
       success: true,
       // Arrays of { name, count } sorted by count desc
-      deviceTypes:    deviceTypeAgg.map((d) => ({ name: d._id, count: d.count })),
-      deviceModels:   deviceModelAgg.map((d) => ({ name: d._id, count: d.count })),
+      deviceTypes: deviceTypeAgg.map((d) => ({ name: d._id, count: d.count })),
+      deviceModels: deviceModelAgg.map((d) => ({ name: d._id, count: d.count })),
       accessoryTypes: accessoryTypeAgg.map((d) => ({ name: d._id, count: d.count })),
       // Combined temp/fuel totals
       tempTotal: temp_device + temp_accessory,
@@ -3428,7 +3672,7 @@ const getDemoStats = async (req, res) => {
       DeviceMasterModel.countDocuments({
         status: "customer demo",
         demoFromDate: { $lte: todayEnd },
-        demoToDate:   { $gte: todayStart },
+        demoToDate: { $gte: todayStart },
       }),
       DeviceMasterModel.countDocuments({
         status: "customer demo",
@@ -3438,7 +3682,7 @@ const getDemoStats = async (req, res) => {
       AccessoryMasterModel.countDocuments({
         status: "customer demo",
         demoFromDate: { $lte: todayEnd },
-        demoToDate:   { $gte: todayStart },
+        demoToDate: { $gte: todayStart },
       }),
       AccessoryMasterModel.countDocuments({
         status: "customer demo",
@@ -3448,7 +3692,7 @@ const getDemoStats = async (req, res) => {
       SimMasterModel.countDocuments({
         status: "customer demo",
         demoFromDate: { $lte: todayEnd },
-        demoToDate:   { $gte: todayStart },
+        demoToDate: { $gte: todayStart },
       }),
       SimMasterModel.countDocuments({
         status: "customer demo",
@@ -3459,12 +3703,12 @@ const getDemoStats = async (req, res) => {
     res.status(200).json({
       success: true,
       total: {
-        within:  deviceWithin  + accessoryWithin  + simWithin,
+        within: deviceWithin + accessoryWithin + simWithin,
         outside: deviceOutside + accessoryOutside + simOutside,
       },
-      device:    { within: deviceWithin,    outside: deviceOutside },
+      device: { within: deviceWithin, outside: deviceOutside },
       accessory: { within: accessoryWithin, outside: accessoryOutside },
-      sim:       { within: simWithin,       outside: simOutside },
+      sim: { within: simWithin, outside: simOutside },
     });
   } catch (error) {
     console.error("Error fetching demo stats:", error);
@@ -3486,18 +3730,18 @@ const getStockStats = async (req, res) => {
     };
 
     // ── Device ──────────────────────────────────────────────
-    const deviceStock   = deviceAll.filter((d) => d.status === "stock");
-    const deviceActive  = deviceAll.filter((d) => d.warrantyStatus === "active");
+    const deviceStock = deviceAll.filter((d) => d.status === "stock");
+    const deviceActive = deviceAll.filter((d) => d.warrantyStatus === "active");
     const deviceInactive = deviceAll.filter((d) => d.warrantyStatus === "out of warranty");
 
     // ── Accessory ───────────────────────────────────────────
-    const accessoryStock    = accessoryAll.filter((a) => a.status === "stock");
-    const accessoryActive   = accessoryAll.filter((a) => a.warnatyStatus === "active");
+    const accessoryStock = accessoryAll.filter((a) => a.status === "stock");
+    const accessoryActive = accessoryAll.filter((a) => a.warnatyStatus === "active");
     const accessoryInactive = accessoryAll.filter((a) => a.warnatyStatus === "out of warranty");
 
     // ── SIM ─────────────────────────────────────────────────
-    const simStock    = simAll.filter((s) => s.status === "stock");
-    const simActive   = simAll.filter((s) => s.isSimActivated === true || (s.activationDate && String(s.activationDate).trim() !== ""));
+    const simStock = simAll.filter((s) => s.status === "stock");
+    const simActive = simAll.filter((s) => s.isSimActivated === true || (s.activationDate && String(s.activationDate).trim() !== ""));
     const simInactive = simAll.filter((s) => !s.isSimActivated && (!s.activationDate || String(s.activationDate).trim() === ""));
 
     const sum = (items, field) => items.reduce((acc, i) => acc + rate(i, field), 0);
@@ -3505,28 +3749,28 @@ const getStockStats = async (req, res) => {
     res.status(200).json({
       success: true,
       device: {
-        stockCount:        deviceStock.length,
-        stockValue:        sum(deviceStock,   "devicePerRate"),
-        activeCount:       deviceActive.length,
-        activeValue:       sum(deviceActive,  "devicePerRate"),
-        inactiveCount:     deviceInactive.length,
-        inactiveValue:     sum(deviceInactive,"devicePerRate"),
+        stockCount: deviceStock.length,
+        stockValue: sum(deviceStock, "devicePerRate"),
+        activeCount: deviceActive.length,
+        activeValue: sum(deviceActive, "devicePerRate"),
+        inactiveCount: deviceInactive.length,
+        inactiveValue: sum(deviceInactive, "devicePerRate"),
       },
       accessory: {
-        stockCount:        accessoryStock.length,
-        stockValue:        sum(accessoryStock,    "accessoryPerRate"),
-        activeCount:       accessoryActive.length,
-        activeValue:       sum(accessoryActive,   "accessoryPerRate"),
-        inactiveCount:     accessoryInactive.length,
-        inactiveValue:     sum(accessoryInactive, "accessoryPerRate"),
+        stockCount: accessoryStock.length,
+        stockValue: sum(accessoryStock, "accessoryPerRate"),
+        activeCount: accessoryActive.length,
+        activeValue: sum(accessoryActive, "accessoryPerRate"),
+        inactiveCount: accessoryInactive.length,
+        inactiveValue: sum(accessoryInactive, "accessoryPerRate"),
       },
       sim: {
-        stockCount:        simStock.length,
-        stockValue:        sum(simStock,    "simPerRate"),
-        activeCount:       simActive.length,
-        activeValue:       sum(simActive,   "simPerRate"),
-        inactiveCount:     simInactive.length,
-        inactiveValue:     sum(simInactive, "simPerRate"),
+        stockCount: simStock.length,
+        stockValue: sum(simStock, "simPerRate"),
+        activeCount: simActive.length,
+        activeValue: sum(simActive, "simPerRate"),
+        inactiveCount: simInactive.length,
+        inactiveValue: sum(simInactive, "simPerRate"),
       },
     });
   } catch (error) {
@@ -3548,6 +3792,8 @@ module.exports = {
   getAggregatedTicketDetails,
 
   getPayrollTechniciansVehicleCountsForDashboard,
+  getPayrollTechniciansOpenTicketsCounts,
+  getPayrollTechniciansOpenTickets,
   getCSEDashboardStats,
   getOpenTicketsQty3Count,
   getOpenTicketsQty3Details,

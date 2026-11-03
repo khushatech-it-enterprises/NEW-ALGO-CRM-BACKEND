@@ -775,6 +775,16 @@ exports.updateDeviceMasters = async (req, res) => {
         }
       }
 
+      // ✅ Restrict status to "sold to customer" if testingStatus is not "tested ok"
+      if (incomingStatus === "sold to customer") {
+        if (device.testingStatus !== "tested ok") {
+          return res.status(400).json({
+            success: false,
+            message: `Cannot change status to "sold to customer". Device testing status is "${device.testingStatus || "not tested"}" (must be "tested ok").`,
+          });
+        }
+      }
+
       // ✅ demo validation/cleanup
       if (incomingStatus === "customer demo") {
         if (!device.demoFromDate || !device.demoToDate) {
@@ -1035,6 +1045,16 @@ exports.createDeviceMasters = async (req, res) => {
       });
     }
 
+    // ✅ Restrict status to "sold to customer" if testingStatus is not "tested ok"
+    if (finalStatus === "sold to customer") {
+      if (data.testingStatus !== "tested ok") {
+        return res.status(400).json({
+          success: false,
+          message: `Cannot set status to "sold to customer". Device testing status is "${data.testingStatus || "not tested"}" (must be "tested ok").`,
+        });
+      }
+    }
+
     // ✅ demo rules
     if (finalStatus === "customer demo") {
       if (!data.demoFromDate || !data.demoToDate) {
@@ -1177,11 +1197,17 @@ exports.bulkCreateDeviceMasters = async (req, res) => {
 // ✅ Get stock device count grouped by deviceModel
 // If clientId is provided (and is a valid ObjectId, not "all"), only count devices linked to that client via MainData store records
 // If clientId is "all" or missing, return ALL stock devices grouped by model
+// If status is "sold to customer", only count stock devices with testingStatus as "tested ok"
 exports.getStockCountByType = async (req, res) => {
   const { clientId } = req.params;
-  console.log("Received Client ID : ", clientId);
+  const status = req.body?.status || req.query?.status;
+  console.log("Received Client ID : ", clientId, "Status : ", status);
   try {
     let matchStage = { status: "stock" };
+
+    if (status === "sold to customer") {
+      matchStage.testingStatus = "tested ok";
+    }
 
     // Only filter by client if a valid ObjectId was provided (not "all")
     if (clientId && clientId !== "all" && mongoose.Types.ObjectId.isValid(clientId)) {
@@ -1229,9 +1255,10 @@ exports.getStockCountByType = async (req, res) => {
 
 // ✅ Preview stock devices by model (returns actual device IDs for bulk-assign preview)
 // Optional query param: clientId — filters to only devices linked to that client via MainData
+// Optional query param: status — if "sold to customer", restricts to devices with testingStatus === "tested ok"
 exports.getStockDevicesByModel = async (req, res) => {
   try {
-    const { deviceModel, limit, clientId } = req.query;
+    const { deviceModel, limit, clientId, status } = req.query;
     if (!deviceModel) {
       return res.status(400).json({ success: false, message: "deviceModel is required" });
     }
@@ -1240,6 +1267,10 @@ exports.getStockDevicesByModel = async (req, res) => {
 
     // Build base filter
     const deviceFilter = { status: "stock", deviceModel };
+
+    if (status === "sold to customer") {
+      deviceFilter.testingStatus = "tested ok";
+    }
 
     // Narrow to client's linked devices via MainData if clientId provided (and is not "all")
     if (clientId && clientId !== "all" && mongoose.Types.ObjectId.isValid(clientId)) {
@@ -1255,7 +1286,7 @@ exports.getStockDevicesByModel = async (req, res) => {
     const devices = await DeviceMasterModel.find(deviceFilter)
       .sort({ createdAt: -1 })
       .limit(qty)
-      .select("deviceId deviceModel deviceType deviceManufacturer createdAt")
+      .select("deviceId deviceModel deviceType deviceManufacturer testingStatus createdAt")
       .lean();
 
     const totalAvailable = await DeviceMasterModel.countDocuments(deviceFilter);
@@ -1374,18 +1405,57 @@ exports.bulkAssignStatus = async (req, res) => {
 
     // Mode 1: Explicit device IDs from checkbox selection
     if (manualDeviceIds && Array.isArray(manualDeviceIds) && manualDeviceIds.length > 0) {
+      const objectIds = manualDeviceIds
+        .filter((id) => mongoose.Types.ObjectId.isValid(id))
+        .map((id) => new mongoose.Types.ObjectId(id));
+
+      if (objectIds.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "No valid device IDs provided",
+        });
+      }
+
+      // Restrict sending devices to customer if testingStatus is not "tested ok"
+      if (status === "sold to customer") {
+        const nonTestedOk = await DeviceMasterModel.find({
+          _id: { $in: objectIds },
+          testingStatus: { $ne: "tested ok" },
+        })
+          .select("deviceId testingStatus")
+          .lean();
+
+        if (nonTestedOk.length > 0) {
+          const samples = nonTestedOk
+            .slice(0, 5)
+            .map((d) => `${d.deviceId || d._id} (${d.testingStatus || "not tested"})`)
+            .join(", ");
+          return res.status(400).json({
+            success: false,
+            message: `Cannot assign to customer: ${nonTestedOk.length} device(s) do not have testingStatus as "tested ok" [${samples}${nonTestedOk.length > 5 ? "..." : ""}]. Only devices tested OK can be sold to customer.`,
+          });
+        }
+      }
+
       // Verify all provided IDs are valid stock devices
-      const validDevices = await DeviceMasterModel.find({
-        _id: { $in: manualDeviceIds.map((id) => new mongoose.Types.ObjectId(id)) },
+      const validFilter = {
+        _id: { $in: objectIds },
         status: "stock",
-      })
+      };
+      if (status === "sold to customer") {
+        validFilter.testingStatus = "tested ok";
+      }
+
+      const validDevices = await DeviceMasterModel.find(validFilter)
         .select("_id")
         .lean();
 
       if (validDevices.length === 0) {
         return res.status(400).json({
           success: false,
-          message: "None of the selected devices are in stock",
+          message: status === "sold to customer"
+            ? "None of the selected devices are in stock with testingStatus 'tested ok'"
+            : "None of the selected devices are in stock",
         });
       }
 
@@ -1410,6 +1480,9 @@ exports.bulkAssignStatus = async (req, res) => {
 
       // Build device filter — optionally scoped to client's MainData-linked devices
       const deviceFilter = { status: "stock", deviceModel };
+      if (status === "sold to customer") {
+        deviceFilter.testingStatus = "tested ok";
+      }
       if (clientId && clientId !== "all" && mongoose.Types.ObjectId.isValid(clientId)) {
         const MainData = require("../models/mainData.model");
         const storeRecords = await MainData.find(
@@ -1430,7 +1503,9 @@ exports.bulkAssignStatus = async (req, res) => {
       if (devices.length === 0) {
         return res.status(400).json({
           success: false,
-          message: `No stock devices found for model "${deviceModel}"${clientId && clientId !== "all" ? " for this client" : ""}`,
+          message: status === "sold to customer"
+            ? `No stock devices with testingStatus 'tested ok' found for model "${deviceModel}"${clientId && clientId !== "all" ? " for this client" : ""}`
+            : `No stock devices found for model "${deviceModel}"${clientId && clientId !== "all" ? " for this client" : ""}`,
         });
       }
 

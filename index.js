@@ -74,14 +74,16 @@ app.use('/api/project', require('./routes/project.route'));
 app.use('/api/ticket', require('./routes/ticket.route'));
 app.use('/api/dashboard', require('./routes/maindashboard.routes'))
 app.use('/api/ticketStatus', require('./routes/ticketStatus.route'));
-//app.use('/api/customerCharge',require('./routes/CustomerChargeRate.route'));
-//app.use('/api/bankStatement',require('./routes/BankSatemant.routes')); 
+app.use('/api/customerCharge', require('./routes/CustomerChargeRate.route'));
+app.use('/api/bankStatement', require('./routes/BankSatemant.routes'));
 app.use('/api/state', require('./routes/state.route'));
 
 app.use('/api/accessoryMaster', require('./routes/accessoryMaster.route'));  // Accessory Master Route
 app.use('/api/deviceMaster', require('./routes/deviceMaster.route'));  // Device Master Route
 app.use('/api/simMaster', require('./routes/simMaster.route'));  // Sim Master Route
 app.use('/api/zone', require('./routes/zone.route'));  // Zone Route
+app.use('/api/server', require('./routes/server.route'));  // Server Route
+app.use('/api/assetType', require('./routes/assetType.route'));  // Asset Type Route
 app.use('/api/swaps', require('./routes/defectiveItemSwap.route'));  // Spare Device Swap Route
 
 
