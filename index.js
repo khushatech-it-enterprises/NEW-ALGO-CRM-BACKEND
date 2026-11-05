@@ -6,7 +6,8 @@ const cors = require('cors');
 const process = require("process");
 const ticketModel = require('./models/ticket.model');
 const { default: mongoose } = require('mongoose');
-const cronjob = require("./Crone-Job/MonthlyMarginCron")
+const cronjob = require("./Crone-Job/MonthlyMarginCron");
+const databaseBackupCron = require("./Crone-Job/DatabaseBackupCron");
 
 dotenv.config();
 connectDB();
@@ -85,6 +86,7 @@ app.use('/api/zone', require('./routes/zone.route'));  // Zone Route
 app.use('/api/server', require('./routes/server.route'));  // Server Route
 app.use('/api/assetType', require('./routes/assetType.route'));  // Asset Type Route
 app.use('/api/swaps', require('./routes/defectiveItemSwap.route'));  // Spare Device Swap Route
+app.use('/api/backup', require('./routes/backup.route')); // Database Backup Route
 
 
 app.use('/api', require('./utils/S3Utils'))  // this is used for presigned URL
@@ -97,3 +99,4 @@ app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
 
 cronjob;
+databaseBackupCron;
