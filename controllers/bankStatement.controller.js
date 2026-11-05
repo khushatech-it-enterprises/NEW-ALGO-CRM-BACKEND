@@ -12,6 +12,7 @@ const ClientpaymentCollection = require("../models/clientPaymentCollection.model
 const SalesRegisterSample = require("../models/salesRegisterSample.model");
 const QstClient = require("../models/qstClient.model");
 const TransactionReport = require("../models/clientTransactionReportCollection.model"); // adjust path
+const BankStatement = require("../models/bankStatement.model");
 
 // Multer Configuration with Enhanced Error Handling
 const paymentFileUpload = multer({
@@ -595,6 +596,16 @@ const processPayments = async (req, res) => {
     }
 
     try {
+      try {
+        await processBankStatementBuffer(
+          req.file.buffer,
+          req.file.originalname,
+          req.user ? req.user._id : null
+        );
+      } catch (bsErr) {
+        console.warn("Bank statement storage note:", bsErr.message);
+      }
+
       const report = await processPaymentFile(req.file.buffer);
 
       // Prepare success response
@@ -4316,7 +4327,312 @@ const getCollectionSummaryForDashboard = async (req, res) => {
   }
 };
 
+const bankStatementUpload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (req, file, cb) => {
+    const allowedMimes = [
+      "application/vnd.ms-excel",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "text/csv",
+      "application/csv",
+      "text/plain",
+    ];
+    const isExtensionValid = /\.(xlsx|xls|csv)$/i.test(file.originalname);
+    if (allowedMimes.includes(file.mimetype) || isExtensionValid) {
+      cb(null, true);
+    } else {
+      cb(new Error("Invalid file type. Only Excel and CSV files are allowed."));
+    }
+  },
+  limits: { fileSize: 10 * 1024 * 1024 },
+}).single("paymentFile");
+
+const processBankStatementBuffer = async (fileBuffer, originalName = "", uploadedBy = null) => {
+  const workbook = XLSX.read(fileBuffer, { type: "buffer" });
+  const sheetName = workbook.SheetNames[0];
+  const worksheet = workbook.Sheets[sheetName];
+  const allRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+  let headerIndex = -1;
+  for (let i = 0; i < Math.min(allRows.length, 25); i++) {
+    const row = allRows[i];
+    if (!row || !Array.isArray(row)) continue;
+    const rowStr = row.map((cell) => String(cell || "").trim().toLowerCase()).join(" ");
+    if (
+      rowStr.includes("date") &&
+      (rowStr.includes("tran id") ||
+        rowStr.includes("trans id") ||
+        rowStr.includes("remarks") ||
+        rowStr.includes("deposits") ||
+        rowStr.includes("utr"))
+    ) {
+      headerIndex = i;
+      break;
+    }
+  }
+
+  if (headerIndex === -1) {
+    throw new Error(
+      "Could not find the header row in the file. Please ensure columns like 'Date', 'Tran Id', 'Remarks', 'UTR Number', 'Deposits' are present."
+    );
+  }
+
+  const headers = Array.from(allRows[headerIndex] || []).map((h) => String(h || "").trim());
+
+  const dateIdx = headers.findIndex((h) => h && (/^date$/i.test(h) || h.toLowerCase().includes("date")));
+  const transIdIdx = headers.findIndex(
+    (h) => h && (/tran\s*id/i.test(h) || /trans\s*id/i.test(h) || /transaction\s*id/i.test(h))
+  );
+  const remarksIdx = headers.findIndex((h) => h && (/remark/i.test(h) || /description/i.test(h)));
+  const utrIdx = headers.findIndex((h) => h && /utr/i.test(h));
+  const depositsIdx = headers.findIndex((h) => h && /deposit/i.test(h));
+
+  const dataRows = allRows.slice(headerIndex + 1);
+  const bulkOps = [];
+  let validRowsCount = 0;
+
+  for (let i = 0; i < dataRows.length; i++) {
+    const r = dataRows[i];
+    if (!r || !Array.isArray(r)) continue;
+
+    const dateVal = dateIdx !== -1 && r[dateIdx] !== undefined ? String(r[dateIdx]).trim() : "";
+    const transIdVal = transIdIdx !== -1 && r[transIdIdx] !== undefined ? String(r[transIdIdx]).trim() : "";
+    const remarksVal = remarksIdx !== -1 && r[remarksIdx] !== undefined ? String(r[remarksIdx]).trim() : "";
+    let utrVal = utrIdx !== -1 && r[utrIdx] !== undefined ? String(r[utrIdx]).trim() : "";
+    if (utrVal === "'-") utrVal = "";
+
+    const depRaw = depositsIdx !== -1 ? r[depositsIdx] : undefined;
+    const depositsVal =
+      depRaw !== undefined && depRaw !== null && depRaw !== "" && !isNaN(parseFloat(depRaw))
+        ? parseFloat(depRaw)
+        : null;
+
+    if (!dateVal && !transIdVal && !remarksVal && depositsVal === null) {
+      continue;
+    }
+
+    validRowsCount++;
+
+    let transactionDate = parseExcelDate(dateVal);
+    if (!transactionDate && dateVal) {
+      try {
+        const parsed = parse(dateVal, "dd-MM-yyyy HH:mm:ss", new Date());
+        if (!isNaN(parsed)) transactionDate = parsed;
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    bulkOps.push({
+      updateOne: {
+        filter: {
+          transId: transIdVal,
+          date: dateVal,
+          remarks: remarksVal,
+        },
+        update: {
+          $set: {
+            date: dateVal,
+            transactionDate: transactionDate || null,
+            transId: transIdVal,
+            remarks: remarksVal,
+            utrNo: utrVal,
+            deposits: depositsVal,
+            rawDeposits: depRaw !== undefined && depRaw !== null ? String(depRaw).trim() : "",
+            sourceFileName: originalName || "",
+            uploadedBy: uploadedBy || null,
+          },
+        },
+        upsert: true,
+      },
+    });
+  }
+
+  let result = null;
+  if (bulkOps.length > 0) {
+    result = await BankStatement.bulkWrite(bulkOps, { ordered: false });
+  }
+
+  return {
+    totalRows: dataRows.length,
+    validRows: validRowsCount,
+    upsertedCount: result ? result.upsertedCount : 0,
+    modifiedCount: result ? result.modifiedCount : 0,
+    matchedCount: result ? result.matchedCount : 0,
+  };
+};
+
+const uploadBankStatement = async (req, res) => {
+  bankStatementUpload(req, res, async (err) => {
+    if (err) {
+      return res.status(400).json({
+        success: false,
+        message: "File upload failed",
+        error: err.message,
+      });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "No file uploaded",
+      });
+    }
+
+    try {
+      const uploadedBy = req.user ? req.user._id : null;
+      const report = await processBankStatementBuffer(
+        req.file.buffer,
+        req.file.originalname,
+        uploadedBy
+      );
+
+      try {
+        await processPaymentFile(req.file.buffer);
+      } catch (payErr) {
+        console.warn("Technician payment processing note:", payErr.message);
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: "Bank statement processed successfully",
+        report,
+      });
+    } catch (error) {
+      console.error("Error processing bank statement file:", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Failed to process bank statement",
+      });
+    }
+  });
+};
+
+const getBankStatements = async (req, res) => {
+  try {
+    const { page = 1, limit = 10, search = "", all = false } = req.query;
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.max(1, parseInt(limit, 10) || 10);
+    const skip = (pageNum - 1) * limitNum;
+
+    const filter = {};
+
+    if (search && search.trim()) {
+      const s = search.trim();
+      const escaped = s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const searchRegex = new RegExp(escaped, "i");
+      filter.$or = [
+        { transId: searchRegex },
+        { remarks: searchRegex },
+        { utrNo: searchRegex },
+        { date: searchRegex },
+      ];
+      const num = parseFloat(s);
+      if (!isNaN(num)) {
+        filter.$or.push({ deposits: num });
+      }
+    }
+
+    if (all === "true" || all === true) {
+      const data = await BankStatement.find(filter).sort({ createdAt: 1, _id: 1 }).lean();
+      return res.status(200).json({
+        success: true,
+        data,
+        total: data.length,
+      });
+    }
+
+    const [data, total] = await Promise.all([
+      BankStatement.find(filter)
+        .sort({ createdAt: 1, _id: 1 })
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
+      BankStatement.countDocuments(filter),
+    ]);
+
+    const totalPages = Math.ceil(total / limitNum) || 1;
+
+    return res.status(200).json({
+      success: true,
+      data,
+      total,
+      totalPages,
+      page: pageNum,
+      limit: limitNum,
+    });
+  } catch (error) {
+    console.error("Error fetching bank statements:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch bank statements",
+      error: error.message,
+    });
+  }
+};
+
+const updateBankStatementDeposit = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid statement ID",
+      });
+    }
+
+    const { deposits } = req.body;
+
+    const parsedDeposits =
+      deposits === null || deposits === "" || deposits === undefined
+        ? null
+        : parseFloat(deposits);
+
+    if (parsedDeposits !== null && isNaN(parsedDeposits)) {
+      return res.status(400).json({
+        success: false,
+        message: "Deposits must be a valid number",
+      });
+    }
+
+    const updatedStatement = await BankStatement.findByIdAndUpdate(
+      id,
+      {
+        $set: {
+          deposits: parsedDeposits,
+          rawDeposits: parsedDeposits !== null ? String(parsedDeposits) : "",
+        },
+      },
+      { new: true }
+    );
+
+    if (!updatedStatement) {
+      return res.status(404).json({
+        success: false,
+        message: "Bank statement record not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Deposit updated successfully",
+      data: updatedStatement,
+    });
+  } catch (error) {
+    console.error("Error updating bank statement deposit:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update deposit",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
+  processBankStatementBuffer,
+  uploadBankStatement,
+  getBankStatements,
+  updateBankStatementDeposit,
   processPayments,
   getAllFullyClosedTicketPendingTechPay,
   processSingleTechnicianPayment,

@@ -77,4 +77,22 @@ router.get(
   bankStatementController.getCollectionSummaryForDashboard
 );
 
+router.post(
+  "/upload-bank-statement",
+  isAuthenticated,
+  authorizeRoles("superAdmin", "admin"),
+  bankStatementController.uploadBankStatement
+);
+router.get(
+  "/get-bank-statements",
+  isAuthenticated,
+  bankStatementController.getBankStatements
+);
+router.patch(
+  "/statement/:id",
+  isAuthenticated,
+  authorizeRoles("superAdmin", "admin"),
+  bankStatementController.updateBankStatementDeposit
+);
+
 module.exports = router;
