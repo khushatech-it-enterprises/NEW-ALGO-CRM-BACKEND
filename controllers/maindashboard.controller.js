@@ -3744,6 +3744,11 @@ const getStockStats = async (req, res) => {
     const simActive = simAll.filter((s) => s.isSimActivated === true || (s.activationDate && String(s.activationDate).trim() !== ""));
     const simInactive = simAll.filter((s) => !s.isSimActivated && (!s.activationDate || String(s.activationDate).trim() === ""));
 
+    // ── With Technician ─────────────────────────────────────
+    const deviceWithTechnician = deviceAll.filter((d) => d.status === "with technician");
+    const accessoryWithTechnician = accessoryAll.filter((a) => a.status === "with technician");
+    const simWithTechnician = simAll.filter((s) => s.status === "with technician");
+
     const sum = (items, field) => items.reduce((acc, i) => acc + rate(i, field), 0);
 
     res.status(200).json({
@@ -3755,6 +3760,8 @@ const getStockStats = async (req, res) => {
         activeValue: sum(deviceActive, "devicePerRate"),
         inactiveCount: deviceInactive.length,
         inactiveValue: sum(deviceInactive, "devicePerRate"),
+        withTechnicianCount: deviceWithTechnician.length,
+        withTechnicianValue: sum(deviceWithTechnician, "devicePerRate"),
       },
       accessory: {
         stockCount: accessoryStock.length,
@@ -3763,6 +3770,8 @@ const getStockStats = async (req, res) => {
         activeValue: sum(accessoryActive, "accessoryPerRate"),
         inactiveCount: accessoryInactive.length,
         inactiveValue: sum(accessoryInactive, "accessoryPerRate"),
+        withTechnicianCount: accessoryWithTechnician.length,
+        withTechnicianValue: sum(accessoryWithTechnician, "accessoryPerRate"),
       },
       sim: {
         stockCount: simStock.length,
@@ -3771,6 +3780,22 @@ const getStockStats = async (req, res) => {
         activeValue: sum(simActive, "simPerRate"),
         inactiveCount: simInactive.length,
         inactiveValue: sum(simInactive, "simPerRate"),
+        withTechnicianCount: simWithTechnician.length,
+        withTechnicianValue: sum(simWithTechnician, "simPerRate"),
+      },
+      withTechnician: {
+        device: {
+          count: deviceWithTechnician.length,
+          value: sum(deviceWithTechnician, "devicePerRate"),
+        },
+        accessory: {
+          count: accessoryWithTechnician.length,
+          value: sum(accessoryWithTechnician, "accessoryPerRate"),
+        },
+        sim: {
+          count: simWithTechnician.length,
+          value: sum(simWithTechnician, "simPerRate"),
+        },
       },
     });
   } catch (error) {
