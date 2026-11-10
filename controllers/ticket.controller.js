@@ -19,6 +19,7 @@ const securityCodeModel = require("../models/securityCode.model");
 const DueDateChangeLog = require("../models/DueDateChangeLog.model");
 const DefectiveItemSwap = require("../models/defectiveItemSwap.model");
 const MainData = require("../models/mainData.model");
+const CseGroup = require("../models/cseGroup.model");
 // const {deleteFromS3 } = require('../utils/S3Utils');
 const s3 = new AWS.S3({
   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
@@ -4194,6 +4195,7 @@ const getAllTickets = async (req, res) => {
       // dateType = "updatedDate",
       dateType,
       dueDateFilter,
+      cseGroup,
     } = req.query;
     // console.log("query", req.query);
     const limit = parseInt(req.query.limit) || 10;
@@ -4238,6 +4240,28 @@ const getAllTickets = async (req, res) => {
       // For CSE, only show tickets assigned to them
       query.assignee = user._id; // Assuming assignee field stores user ID
       statsBaseFilter.assignee = user._id; // Apply same filter to stats
+    } else if (
+      cseGroup &&
+      cseGroup !== "undefined" &&
+      cseGroup !== "null" &&
+      ["admin", "superAdmin"].includes(user.role)
+    ) {
+      if (!mongoose.Types.ObjectId.isValid(cseGroup)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid CSE group ID",
+        });
+      }
+      const group = await CseGroup.findById(cseGroup).select("members").lean();
+      if (!group) {
+        return res.status(404).json({
+          success: false,
+          message: "CSE group not found",
+        });
+      }
+      const memberIds = group.members || [];
+      query.assignee = { $in: memberIds };
+      statsBaseFilter.assignee = { $in: memberIds };
     }
 
     // Add status filter if provided
