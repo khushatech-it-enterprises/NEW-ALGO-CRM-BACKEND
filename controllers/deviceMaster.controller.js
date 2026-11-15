@@ -1205,7 +1205,7 @@ exports.getStockCountByType = async (req, res) => {
   try {
     let matchStage = { status: "stock" };
 
-    if (status === "sold to customer") {
+    if (status === "sold to customer" || status === "send to customer") {
       matchStage.testingStatus = "tested ok";
     }
 
@@ -1223,10 +1223,7 @@ exports.getStockCountByType = async (req, res) => {
 
       console.log(`Client ${clientId} has ${linkedDeviceIds.length} linked device(s) in store`);
 
-      matchStage = {
-        status: "stock",
-        _id: { $in: linkedDeviceIds },
-      };
+      matchStage._id = { $in: linkedDeviceIds };
     }
 
     const counts = await DeviceMasterModel.aggregate([
@@ -1266,9 +1263,12 @@ exports.getStockDevicesByModel = async (req, res) => {
     const qty = Math.min(parseInt(limit, 10) || 500, 20000);
 
     // Build base filter
-    const deviceFilter = { status: "stock", deviceModel };
+    const deviceFilter = { status: "stock" };
+    if (deviceModel && deviceModel !== "all") {
+      deviceFilter.deviceModel = deviceModel;
+    }
 
-    if (status === "sold to customer") {
+    if (status === "sold to customer" || status === "send to customer") {
       deviceFilter.testingStatus = "tested ok";
     }
 
@@ -1376,9 +1376,12 @@ exports.bulkAssignStatus = async (req, res) => {
   try {
     const { deviceModel, quantity, status, assignedTo, clientId, deviceIds: manualDeviceIds } = req.body;
 
+    const targetStatus = status === "send to customer" ? "sold to customer" : status;
+
     const VALID_STATUSES = [
       "testing",
       "sold to customer",
+      "send to customer",
       "with technician",
       "with cse",
       "foc",
@@ -1398,8 +1401,8 @@ exports.bulkAssignStatus = async (req, res) => {
       });
     }
 
-    // Determine assignedToModel based on status
-    const assignedToModel = getAssignedToModelFromStatus(status);
+    // Determine assignedToModel based on targetStatus
+    const assignedToModel = getAssignedToModelFromStatus(targetStatus);
 
     let deviceIds;
 
@@ -1417,7 +1420,7 @@ exports.bulkAssignStatus = async (req, res) => {
       }
 
       // Restrict sending devices to customer if testingStatus is not "tested ok"
-      if (status === "sold to customer") {
+      if (targetStatus === "sold to customer") {
         const nonTestedOk = await DeviceMasterModel.find({
           _id: { $in: objectIds },
           testingStatus: { $ne: "tested ok" },
@@ -1442,7 +1445,7 @@ exports.bulkAssignStatus = async (req, res) => {
         _id: { $in: objectIds },
         status: "stock",
       };
-      if (status === "sold to customer") {
+      if (targetStatus === "sold to customer") {
         validFilter.testingStatus = "tested ok";
       }
 
@@ -1453,7 +1456,7 @@ exports.bulkAssignStatus = async (req, res) => {
       if (validDevices.length === 0) {
         return res.status(400).json({
           success: false,
-          message: status === "sold to customer"
+          message: targetStatus === "sold to customer"
             ? "None of the selected devices are in stock with testingStatus 'tested ok'"
             : "None of the selected devices are in stock",
         });
@@ -1479,8 +1482,11 @@ exports.bulkAssignStatus = async (req, res) => {
       }
 
       // Build device filter — optionally scoped to client's MainData-linked devices
-      const deviceFilter = { status: "stock", deviceModel };
-      if (status === "sold to customer") {
+      const deviceFilter = { status: "stock" };
+      if (deviceModel && deviceModel !== "all") {
+        deviceFilter.deviceModel = deviceModel;
+      }
+      if (targetStatus === "sold to customer") {
         deviceFilter.testingStatus = "tested ok";
       }
       if (clientId && clientId !== "all" && mongoose.Types.ObjectId.isValid(clientId)) {
@@ -1503,7 +1509,7 @@ exports.bulkAssignStatus = async (req, res) => {
       if (devices.length === 0) {
         return res.status(400).json({
           success: false,
-          message: status === "sold to customer"
+          message: targetStatus === "sold to customer"
             ? `No stock devices with testingStatus 'tested ok' found for model "${deviceModel}"${clientId && clientId !== "all" ? " for this client" : ""}`
             : `No stock devices found for model "${deviceModel}"${clientId && clientId !== "all" ? " for this client" : ""}`,
         });
@@ -1519,13 +1525,13 @@ exports.bulkAssignStatus = async (req, res) => {
       { _id: { $in: deviceIds } },
       {
         $set: {
-          status: status,
+          status: targetStatus,
           assignedTo: new mongoose.Types.ObjectId(assignedTo),
           assignedToModel: assignedToModel,
         },
         $push: {
           statusHistory: {
-            status: status,
+            status: targetStatus,
             changedAt: new Date(),
             changedBy: `${changedBy} - Bulk Assign`,
           },
@@ -1537,7 +1543,7 @@ exports.bulkAssignStatus = async (req, res) => {
       success: true,
       message: `${deviceIds.length} devices assigned successfully`,
       assignedCount: deviceIds.length,
-      status: status,
+      status: targetStatus,
     });
   } catch (error) {
     console.error(error);
