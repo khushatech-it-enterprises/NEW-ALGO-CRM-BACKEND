@@ -19,7 +19,8 @@ const app = express();
 const allowedOrigins = [
   'https://crm.algotrack.in',
   'http://crm.algotrack.in',
-  'http://localhost:5173'
+  'http://localhost:5173',
+  'http://localhost:5174'
 ];
 
 const corsOptions = {

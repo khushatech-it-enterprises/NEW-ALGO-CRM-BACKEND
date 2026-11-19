@@ -602,15 +602,272 @@ exports.toggleCseGroupActive = async (req, res) => {
   }
 };
 
+// Shared helper to query paginated group tickets and summary stats
+async function queryTicketsForMembers({
+  memberIds,
+  members,
+  groupName,
+  groups,
+  selectedGroupId = "all",
+  req,
+  res,
+}) {
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.max(1, parseInt(req.query.limit, 10) || 10);
+  const search = (req.query.search || "").trim();
+  const status = req.query.status || "";
+  const memberId = (req.query.memberId || "").trim();
+  const isCse = req.user?.role === "cse";
+
+  if (!memberIds || memberIds.length === 0) {
+    return res.status(200).json({
+      success: true,
+      groupName,
+      ...(groups !== undefined ? { groups, selectedGroupId } : {}),
+      members: members || [],
+      stats: { total: 0, open: 0, closed: 0 },
+      data: [],
+      pagination: { page, limit, total: 0, totalPages: 0 },
+    });
+  }
+
+  let assigneeFilter = { $in: memberIds };
+  if (memberId) {
+    if (!mongoose.Types.ObjectId.isValid(memberId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid memberId filter",
+      });
+    }
+    const isInGroup = memberIds.some((m) => m.toString() === memberId);
+    if (!isInGroup) {
+      return res.status(isCse ? 403 : 400).json({
+        success: false,
+        message: isCse
+          ? "Access denied. Selected CSE is not a member of your group"
+          : "Selected CSE is not a member of this group",
+      });
+    }
+    assigneeFilter = new mongoose.Types.ObjectId(memberId);
+  }
+
+  const baseGroupQuery = { assignee: assigneeFilter };
+  const andConditions = [baseGroupQuery];
+
+  const statusConditions = getTicketStatusConditions(status);
+  if (statusConditions) {
+    andConditions.push(...statusConditions);
+  }
+
+  if (search) {
+    const searchRegex = new RegExp(escapeRegex(search), "i");
+    const matchingAssignees = await Employee.find({
+      _id: { $in: memberIds },
+      name: searchRegex,
+    }).distinct("_id");
+
+    const orConditions = [
+      { ticketSKUId: searchRegex },
+      { qstClientTicketNumber: searchRegex },
+      { customerName: searchRegex },
+      { mobile: searchRegex },
+      { location: searchRegex },
+      { subjectLine: searchRegex },
+      { description: searchRegex },
+      { "vehicleNumbers.vehicleNumber": searchRegex },
+    ];
+
+    if (matchingAssignees.length > 0) {
+      orConditions.push({ assignee: { $in: matchingAssignees } });
+    }
+    if (mongoose.Types.ObjectId.isValid(search)) {
+      orConditions.push({ _id: new mongoose.Types.ObjectId(search) });
+    }
+
+    andConditions.push({ $or: orConditions });
+  }
+
+  const ticketQuery =
+    andConditions.length === 1 ? andConditions[0] : { $and: andConditions };
+
+  const [totalTickets, openCount, closedCount, tickets] = await Promise.all([
+    Ticket.countDocuments(ticketQuery),
+    Ticket.countDocuments({
+      assignee: assigneeFilter,
+      $and: [
+        { ticketStatus: { $ne: "work done" } },
+        { isTicketClosed: { $ne: true } },
+      ],
+    }),
+    Ticket.countDocuments({
+      assignee: assigneeFilter,
+      $or: [{ ticketStatus: "work done" }, { isTicketClosed: true }],
+    }),
+    Ticket.find(ticketQuery)
+      .select("+isTechnicianPaymentSuccessDate +annexturepaid")
+      .populate("qstClientName", "companyShortName companyName")
+      .populate("assignee", "name email _id")
+      .populate("taskType", "taskName")
+      .populate("deviceType", "deviceName")
+      .populate("technician", "name nickName beneficiaryId")
+      .populate("creator", "name")
+      .populate("qstProjectID", "projectName _id")
+      .populate("softCloseByTechnicianComment")
+      .sort({ dueDate: 1, createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean(),
+  ]);
+
+  const totalPages = Math.ceil(totalTickets / limit);
+
+  return res.status(200).json({
+    success: true,
+    groupName,
+    ...(groups !== undefined ? { groups, selectedGroupId } : {}),
+    members,
+    stats: {
+      total: openCount + closedCount,
+      open: openCount,
+      closed: closedCount,
+    },
+    data: tickets,
+    pagination: {
+      page,
+      limit,
+      total: totalTickets,
+      totalPages,
+    },
+  });
+}
+
+// Get CSE Groups accessible to the logged-in user (own active groups for CSE; all active groups for admin/superAdmin)
+exports.getMyCseGroups = async (req, res) => {
+  try {
+    const role = req.user?.role;
+    const filter = { isActive: true };
+    if (role === "cse") {
+      filter.members = req.user._id;
+    }
+
+    const groups = await CseGroup.find(filter)
+      .select("_id name description members")
+      .populate("members", "name email phoneNumber zone")
+      .sort({ name: 1 })
+      .lean();
+
+    res.status(200).json({
+      success: true,
+      data: groups,
+    });
+  } catch (error) {
+    console.error("Error fetching user CSE groups:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal Server Error",
+      error: error.message,
+    });
+  }
+};
+
+// Get tickets for the logged-in CSE's group members (or all/selected active groups for admin/superAdmin)
+exports.getMyGroupTickets = async (req, res) => {
+  try {
+    const role = req.user?.role;
+    const requestedGroupId = (req.query.groupId || "").trim();
+
+    const groupFilter = { isActive: true };
+    if (role === "cse") {
+      groupFilter.members = req.user._id;
+    }
+
+    const groups = await CseGroup.find(groupFilter)
+      .select("_id name description members")
+      .populate("members", "name email phoneNumber zone")
+      .sort({ name: 1 })
+      .lean();
+
+    if (!groups || groups.length === 0) {
+      const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+      const limit = Math.max(1, parseInt(req.query.limit, 10) || 10);
+      return res.status(200).json({
+        success: true,
+        groupName: "",
+        groups: [],
+        selectedGroupId: "all",
+        members: [],
+        stats: { total: 0, open: 0, closed: 0 },
+        data: [],
+        pagination: { page, limit, total: 0, totalPages: 0 },
+      });
+    }
+
+    let targetGroups = groups;
+    let selectedGroupId = "all";
+    let groupName =
+      groups.length === 1 ? groups[0].name : "All My CSE Groups";
+
+    if (requestedGroupId && requestedGroupId !== "all") {
+      if (!mongoose.Types.ObjectId.isValid(requestedGroupId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid groupId filter",
+        });
+      }
+
+      const matchedGroup = groups.find(
+        (g) => g._id.toString() === requestedGroupId
+      );
+      if (!matchedGroup) {
+        return res.status(role === "cse" ? 403 : 404).json({
+          success: false,
+          message:
+            role === "cse"
+              ? "Access denied. You are not a member of this CSE group"
+              : "CSE Group not found",
+        });
+      }
+
+      targetGroups = [matchedGroup];
+      selectedGroupId = matchedGroup._id.toString();
+      groupName = matchedGroup.name;
+    }
+
+    const memberMap = new Map();
+    for (const grp of targetGroups) {
+      for (const member of grp.members || []) {
+        if (member?._id && !memberMap.has(member._id.toString())) {
+          memberMap.set(member._id.toString(), member);
+        }
+      }
+    }
+
+    const uniqueMembers = Array.from(memberMap.values());
+    const memberIds = uniqueMembers.map((m) => m._id);
+
+    return await queryTicketsForMembers({
+      memberIds,
+      members: uniqueMembers,
+      groupName,
+      groups,
+      selectedGroupId,
+      req,
+      res,
+    });
+  } catch (error) {
+    console.error("Error fetching my group tickets:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal Server Error",
+      error: error.message,
+    });
+  }
+};
+
 // Watch all tickets for all CSE members in a group in one go
 exports.getCseGroupTickets = async (req, res) => {
   try {
     const { id } = req.params;
-    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-    const limit = Math.max(1, parseInt(req.query.limit, 10) || 10);
-    const search = (req.query.search || "").trim();
-    const status = req.query.status || "";
-    const memberId = req.query.memberId || "";
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -630,124 +887,28 @@ exports.getCseGroupTickets = async (req, res) => {
       });
     }
 
-    if (!group.members || group.members.length === 0) {
-      return res.status(200).json({
-        success: true,
-        groupName: group.name,
-        members: [],
-        stats: { total: 0, open: 0, closed: 0 },
-        data: [],
-        pagination: { page, limit, total: 0, totalPages: 0 },
-      });
-    }
-
-    const memberIds = group.members.map((m) => m._id);
-
-    // Optional single-CSE focus filter inside the group
-    let assigneeFilter = { $in: memberIds };
-    if (memberId) {
-      if (!mongoose.Types.ObjectId.isValid(memberId)) {
-        return res.status(400).json({
+    if (req.user?.role === "cse") {
+      const currentUserId = (req.user._id || "").toString();
+      const isMember = (group.members || []).some(
+        (m) => m?._id?.toString() === currentUserId
+      );
+      if (!group.isActive || !isMember) {
+        return res.status(403).json({
           success: false,
-          message: "Invalid memberId filter",
+          message: "Access denied. You are not a member of this CSE group",
         });
       }
-      const isInGroup = memberIds.some((m) => m.toString() === memberId);
-      if (!isInGroup) {
-        return res.status(400).json({
-          success: false,
-          message: "Selected CSE is not a member of this group",
-        });
-      }
-      assigneeFilter = new mongoose.Types.ObjectId(memberId);
     }
 
-    const baseGroupQuery = { assignee: assigneeFilter };
-    const andConditions = [baseGroupQuery];
+    const members = group.members || [];
+    const memberIds = members.map((m) => m._id);
 
-    const statusConditions = getTicketStatusConditions(status);
-    if (statusConditions) {
-      andConditions.push(...statusConditions);
-    }
-
-    if (search) {
-      const searchRegex = new RegExp(escapeRegex(search), "i");
-      const matchingAssignees = await Employee.find({
-        _id: { $in: memberIds },
-        name: searchRegex,
-      }).distinct("_id");
-
-      const orConditions = [
-        { ticketSKUId: searchRegex },
-        { qstClientTicketNumber: searchRegex },
-        { customerName: searchRegex },
-        { mobile: searchRegex },
-        { location: searchRegex },
-        { subjectLine: searchRegex },
-        { description: searchRegex },
-        { "vehicleNumbers.vehicleNumber": searchRegex },
-      ];
-
-      if (matchingAssignees.length > 0) {
-        orConditions.push({ assignee: { $in: matchingAssignees } });
-      }
-      if (mongoose.Types.ObjectId.isValid(search)) {
-        orConditions.push({ _id: new mongoose.Types.ObjectId(search) });
-      }
-
-      andConditions.push({ $or: orConditions });
-    }
-
-    const ticketQuery =
-      andConditions.length === 1 ? andConditions[0] : { $and: andConditions };
-
-    const [totalTickets, openCount, closedCount, tickets] = await Promise.all([
-      Ticket.countDocuments(ticketQuery),
-      Ticket.countDocuments({
-        assignee: assigneeFilter,
-        $and: [
-          { ticketStatus: { $ne: "work done" } },
-          { isTicketClosed: { $ne: true } },
-        ],
-      }),
-      Ticket.countDocuments({
-        assignee: assigneeFilter,
-        $or: [{ ticketStatus: "work done" }, { isTicketClosed: true }],
-      }),
-      Ticket.find(ticketQuery)
-        .select("+isTechnicianPaymentSuccessDate +annexturepaid")
-        .populate("qstClientName", "companyShortName companyName")
-        .populate("assignee", "name email _id")
-        .populate("taskType", "taskName")
-        .populate("deviceType", "deviceName")
-        .populate("technician", "name nickName beneficiaryId")
-        .populate("creator", "name")
-        .populate("qstProjectID", "projectName _id")
-        .populate("softCloseByTechnicianComment")
-        .sort({ dueDate: 1, createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .lean(),
-    ]);
-
-    const totalPages = Math.ceil(totalTickets / limit);
-
-    res.status(200).json({
-      success: true,
+    return await queryTicketsForMembers({
+      memberIds,
+      members,
       groupName: group.name,
-      members: group.members,
-      stats: {
-        total: openCount + closedCount,
-        open: openCount,
-        closed: closedCount,
-      },
-      data: tickets,
-      pagination: {
-        page,
-        limit,
-        total: totalTickets,
-        totalPages,
-      },
+      req,
+      res,
     });
   } catch (error) {
     console.error("Error fetching CSE group tickets:", error);

@@ -4890,6 +4890,14 @@ const getTicketById = async (req, res) => {
 
 const deleteTicketById = async (req, res) => {
   try {
+    const role = req.user?.role;
+    if (role !== "superAdmin" && role !== "admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. Only admin and superAdmin can delete tickets",
+      });
+    }
+
     const { ticketId } = req.params;
 
     if (!mongoose.Types.ObjectId.isValid(ticketId)) {
@@ -5977,6 +5985,21 @@ const updateTicket = async (req, res) => {
       });
     }
 
+    // CSE can only edit their own tickets; only admin and superAdmin can edit other CSEs' tickets
+    if (role === "cse") {
+      const ticketAssigneeId = existingTicket.assignee
+        ? (existingTicket.assignee._id || existingTicket.assignee).toString()
+        : null;
+      const currentUserId = (req.user?._id || req.user?.id || "").toString();
+      if (!ticketAssigneeId || ticketAssigneeId !== currentUserId) {
+        return res.status(403).json({
+          success: false,
+          message:
+            "Access denied. CSEs can only edit tickets assigned to themselves, not other CSEs' tickets.",
+        });
+      }
+    }
+
     // ✅ Lock ticket if dueDateEditCount > 2 (only applicable to CSE role)
     // Admin and superAdmin can always update tickets regardless of lock status
     if (existingTicket.dueDateEditCount > 2) {
@@ -6638,6 +6661,34 @@ const saveImageAndVideoURlToTicketUploadByCSE = async (req, res) => {
         success: false,
         message: "Maximum 4 images allowed",
       });
+    }
+
+    // CSE can only modify media on their own assigned tickets
+    if (req.user?.role === "cse") {
+      if (!mongoose.Types.ObjectId.isValid(ticketId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid ticket ID format",
+        });
+      }
+      const existingTicket = await Ticket.findById(ticketId).select("assignee");
+      if (!existingTicket) {
+        return res.status(404).json({
+          success: false,
+          message: "Ticket not found",
+        });
+      }
+      const ticketAssigneeId = existingTicket.assignee
+        ? (existingTicket.assignee._id || existingTicket.assignee).toString()
+        : null;
+      const currentUserId = (req.user?._id || req.user?.id || "").toString();
+      if (!ticketAssigneeId || ticketAssigneeId !== currentUserId) {
+        return res.status(403).json({
+          success: false,
+          message:
+            "Access denied. CSEs can only upload media to their own assigned tickets.",
+        });
+      }
     }
 
     // console.log('Before extractS3Key call', typeof extractS3Key, extractS3Key);

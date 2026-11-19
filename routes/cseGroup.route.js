@@ -71,9 +71,23 @@ router.delete(
 );
 
 router.get(
+  "/my-groups",
+  isAuthenticated,
+  authorizeRoles("superAdmin", "admin", "cse"),
+  cseGroupController.getMyCseGroups
+);
+
+router.get(
+  "/my-group-tickets",
+  isAuthenticated,
+  authorizeRoles("superAdmin", "admin", "cse"),
+  cseGroupController.getMyGroupTickets
+);
+
+router.get(
   "/group-tickets/:id",
   isAuthenticated,
-  authorizeRoles("superAdmin", "admin"),
+  authorizeRoles("superAdmin", "admin", "cse"),
   cseGroupController.getCseGroupTickets
 );
 

@@ -8,7 +8,7 @@ const router = express.Router();
 
 // POST route for creating a ticket
 router.get('/getTicketById/:ticketId', ticketController.getTicketById);
-router.delete('/deleteTicketById/:ticketId', isAuthenticated, ticketController.deleteTicketById);
+router.delete('/deleteTicketById/:ticketId', isAuthenticated, authorizeRoles("superAdmin", "admin"), ticketController.deleteTicketById);
 router.post('/create-new-ticket', isAuthenticated, authorizeRoles("superAdmin", "admin", "cse"), ticketController.createTicket);
 router.post('/create-new-ticket1', ticketController.createNewTicket);
 router.get('/get-all-tickets', isAuthenticated, ticketController.getAllTickets);
