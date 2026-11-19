@@ -4540,8 +4540,8 @@ const getAllTickets = async (req, res) => {
       .populate("creator", "name")
       .populate("qstProjectID", "projectName _id")
       .populate("softCloseByTechnicianComment")
-      // .populate("issueFoundRef", "issueFoundName")
-      // .populate("resolutionRef", "ResolutionName")
+      .populate("issueFoundRef", "issueFoundName")
+      .populate("resolutionRef", "ResolutionName")
       .sort(sortCriteria) // Use the dynamic sort criteria
       // .sort(dateType === "dueDate" ? { dueDate: 1 } : { [selectedDateField]: -1 }) // Modified this line
       // .sort({ [selectedDateField]: -1 })
