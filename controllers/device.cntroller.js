@@ -486,8 +486,8 @@ const getDetailsForStore = async (req, res) => {
 
     const [devices, sims, accessories] = await Promise.all([
       DeviceMaster.find({ _id: { $nin: usedDeviceIds }, status: "stock", testingStatus: "tested ok" }),
-      SimMaster.find({ _id: { $nin: usedSimIds }, status: "stock", testingStatus: "tested ok" }),
-      AccessoryMaster.find({ status: "stock", testingStatus: "tested ok" }), // ✅ return all because repeat allowed
+      SimMaster.find({ _id: { $nin: usedSimIds }, status: "stock" }),
+      AccessoryMaster.find({ status: "stock", }), // ✅ return all because repeat allowed
     ]);
 
     res.status(200).json({
