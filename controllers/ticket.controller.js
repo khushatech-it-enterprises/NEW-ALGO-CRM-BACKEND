@@ -6000,29 +6000,13 @@ const updateTicket = async (req, res) => {
       }
     }
 
-    // ✅ Lock ticket if dueDateEditCount > 2 (only applicable to CSE role)
-    // Admin and superAdmin can always update tickets regardless of lock status
-    if (existingTicket.dueDateEditCount > 2) {
-      // Ensure ticket is locked
-      if (!existingTicket.isTicketLocked) {
-        existingTicket.isTicketLocked = true;
-        await existingTicket.save();
-      }
-
-      // Block non-CSE, non-admin, non-superAdmin users from updating locked tickets
-      // CSE, admin, and superAdmin can update locked tickets
-      if (role !== "cse" && role !== "admin" && role !== "superAdmin") {
-        return res.status(403).json({
-          success: false,
-          message:
-            "Ticket is locked. Only CSE, admin, and superAdmin users can update this ticket.",
-        });
-      }
-    }
+    // [TEMPORARY FEATURE TOGGLE] Set to true to re-enable ticket locking functionality for CSE edits
+    const IS_TICKET_LOCKING_ENABLED = false;
 
     // ✅ Lock ticket if dueDateEditCount > 2 (only applicable to CSE role)
     // Admin and superAdmin can always update tickets regardless of lock status
-    if (existingTicket.dueDateEditCount > 2) {
+    // [TEMPORARILY DISABLED] Set IS_TICKET_LOCKING_ENABLED = true to re-enable
+    if (IS_TICKET_LOCKING_ENABLED && existingTicket.dueDateEditCount > 2) {
       // Ensure ticket is locked
       if (!existingTicket.isTicketLocked) {
         existingTicket.isTicketLocked = true;
@@ -6182,13 +6166,8 @@ const updateTicket = async (req, res) => {
 
       if (oldDate !== newDate) {
         // ❌ Only apply edit limit to CSE role - Block if count is already >= 2
-        // ❌ Only apply edit limit to CSE role - Block if count is already >= 2
-        if (role === "cse" && existingTicket.dueDateEditCount >= 2) {
-          // Ensure ticket is locked
-          if (!existingTicket.isTicketLocked) {
-            existingTicket.isTicketLocked = true;
-            await existingTicket.save();
-          }
+        // [TEMPORARILY DISABLED] Set IS_TICKET_LOCKING_ENABLED = true to re-enable
+        if (IS_TICKET_LOCKING_ENABLED && role === "cse" && existingTicket.dueDateEditCount >= 2) {
           // Ensure ticket is locked
           if (!existingTicket.isTicketLocked) {
             existingTicket.isTicketLocked = true;
@@ -6202,7 +6181,8 @@ const updateTicket = async (req, res) => {
         }
 
         // ✅ Increment edit count ONLY for CSE
-        if (role === "cse") {
+        // [TEMPORARILY DISABLED] Set IS_TICKET_LOCKING_ENABLED = true to re-enable
+        if (IS_TICKET_LOCKING_ENABLED && role === "cse") {
           existingTicket.dueDateEditCount += 1;
 
           // Lock ticket if count exceeds 2 after incrementing

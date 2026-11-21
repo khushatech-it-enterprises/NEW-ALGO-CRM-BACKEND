@@ -28,17 +28,6 @@ const accessoryMasterSchema = new mongoose.Schema(
 
     accessoryType: {
       type: String,
-      enum: [
-        "RFID",
-        "Fuel sensor - wired",
-        "Fuel sensor - wireless",
-        "RelayTemperature sensor",
-        "Door sensor",
-        "Drum rotation sensor",
-        "SD card",
-        "4g router",
-        "wifi dongle",
-      ],
     },
 
     accessoryModel: String,

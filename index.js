@@ -86,6 +86,8 @@ app.use('/api/simMaster', require('./routes/simMaster.route'));  // Sim Master R
 app.use('/api/zone', require('./routes/zone.route'));  // Zone Route
 app.use('/api/server', require('./routes/server.route'));  // Server Route
 app.use('/api/assetType', require('./routes/assetType.route'));  // Asset Type Route
+app.use('/api/accessoryType', require('./routes/accessoryType.route'));  // Accessory Type Route
+app.use('/api/simType', require('./routes/simType.route'));  // SIM Type Route
 app.use('/api/swaps', require('./routes/defectiveItemSwap.route'));  // Spare Device Swap Route
 app.use('/api/backup', require('./routes/backup.route')); // Database Backup Route
 app.use('/api/cse-group', require('./routes/cseGroup.route')); // CSE Group Master Route

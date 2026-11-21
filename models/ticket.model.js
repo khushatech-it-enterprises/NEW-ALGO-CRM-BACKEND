@@ -341,7 +341,7 @@ const ticketSchema = new mongoose.Schema({
     type: Number,
     default: 0,
     min: 0,
-    max: 2
+    // max: 2 // [TEMPORARILY DISABLED] Uncomment to re-enable max 2 edits limit
   },
 
 
