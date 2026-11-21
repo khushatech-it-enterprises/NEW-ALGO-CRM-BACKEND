@@ -12700,6 +12700,130 @@ const exportAllTickets = async (req, res) => {
   }
 };
 
+const resendTechnicianEmail = async (req, res) => {
+  try {
+    const { ticketId } = req.params;
+
+    if (!ticketId) {
+      return res.status(400).json({
+        success: false,
+        message: "Ticket ID is required",
+      });
+    }
+
+    const ticket = await Ticket.findById(ticketId)
+      .populate("qstClientName", "companyShortName companyName")
+      .populate("assignee", "name")
+      .populate("taskType", "taskName")
+      .populate("deviceType", "deviceName")
+      .populate("technician");
+
+    if (!ticket) {
+      return res.status(404).json({
+        success: false,
+        message: "Ticket not found",
+      });
+    }
+
+    const rawStatus = (
+      typeof ticket.ticketStatus === "string"
+        ? ticket.ticketStatus
+        : ticket.ticketStatus?.statusName || ""
+    )
+      .trim()
+      .toLowerCase()
+      .replace(/[-_]/g, " ");
+
+    const allowedStatuses = [
+      "tech assigned",
+      "technician assigned",
+      "tech aligned",
+      "technician aligned",
+    ];
+
+    if (!allowedStatuses.includes(rawStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: `Resend mail is only allowed for tickets with status: ${allowedStatuses.join(", ")}. Current status is '${ticket.ticketStatus}'.`,
+      });
+    }
+
+    if (!ticket.technician) {
+      return res.status(400).json({
+        success: false,
+        message: "No technician assigned to this ticket",
+      });
+    }
+
+    if (!ticket.technician.email) {
+      return res.status(400).json({
+        success: false,
+        message: `Technician (${ticket.technician.name || "Technician"}) does not have an email address`,
+      });
+    }
+
+    // Invalidate previous security codes for this ticket
+    await securityCodeModel.deleteMany({ ticketId: ticket._id });
+
+    // Generate unique 6-digit security code
+    let securityCode;
+    let isUnique = false;
+    let attempts = 0;
+    while (!isUnique && attempts < 10) {
+      securityCode = Math.floor(100000 + Math.random() * 900000).toString();
+      const existing = await securityCodeModel.findOne({ securityCode });
+      if (!existing) {
+        isUnique = true;
+      }
+      attempts++;
+    }
+
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days expiration
+
+    const createdSecurityCode = await securityCodeModel.create({
+      securityCode,
+      ticketId: ticket._id,
+      technicianId: ticket.technician._id,
+      expiresAt,
+    });
+
+    ticket.securityCodeId = createdSecurityCode._id;
+    await ticket.save();
+
+    const emailContent = generateTechnicianAssignmentEmail(
+      ticket.toObject(),
+      ticket.technician,
+      securityCode
+    );
+
+    console.log(
+      `[Resend Email] Sending mail to technician: ${ticket.technician.email} for ticket ${ticket._id}`
+    );
+
+    await sendEmail({
+      to: ticket.technician.email,
+      subject: emailContent.subject,
+      html: emailContent.html,
+      text: emailContent.text,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: `Ticket details with new security code sent successfully to ${ticket.technician.email}`,
+      data: {
+        ticketId: ticket._id,
+        technicianEmail: ticket.technician.email,
+      },
+    });
+  } catch (error) {
+    console.error("Error in resendTechnicianEmail:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to resend technician email",
+    });
+  }
+};
+
 module.exports = {
   exportAllTickets,
   getAllTickets,
@@ -12740,5 +12864,6 @@ module.exports = {
   getTicketsByAvailabilityRange,
   ExportCanceledTicketDataByDateRange,
   softCloseTicket,
-  sendTicketDataOnSecondSystem
+  sendTicketDataOnSecondSystem,
+  resendTechnicianEmail
 };

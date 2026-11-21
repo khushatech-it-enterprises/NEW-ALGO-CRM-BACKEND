@@ -90,6 +90,7 @@ router.get('/availability-range', ticketController.getTicketsByAvailabilityRange
 // Forward ticket data to secondary .NET system
 router.post('/send-ticket-data-on-second-system', isAuthenticated, ticketController.sendTicketDataOnSecondSystem);
 
-
+// Resend technician assignment email with new security code
+router.post('/resend-technician-mail/:ticketId', isAuthenticated, authorizeRoles("superAdmin", "admin", "cse"), ticketController.resendTechnicianEmail);
 
 module.exports = router;
