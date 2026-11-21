@@ -19,20 +19,20 @@ router.get(
 router.delete(
   "/delete/:id",
   isAuthenticated,
-  authorizeRoles("superAdmin", "admin"),
+  authorizeRoles('superAdmin', 'admin', 'store', 'r&d'),
   deviceController.deleteDevice
 );
 router.patch(
   "/update/:id",
   isAuthenticated,
-  authorizeRoles("superAdmin", "admin"),
+  authorizeRoles('superAdmin', 'admin', 'store', 'r&d'),
   deviceController.updateDevice
 );
 // POST routes
 router.post(
   "/create-device",
   isAuthenticated,
-  authorizeRoles("superAdmin", "admin"),
+  authorizeRoles('superAdmin', 'admin', 'store', 'r&d'),
   deviceController.createDevice
 );
 
@@ -44,13 +44,13 @@ router.post(
 );
 
 router.get(
-  '/get-detailsof-algoClient/:id', 
+  '/get-detailsof-algoClient/:id',
   isAuthenticated,
   deviceController.getDetailsOfAlgoClient
 );
 
 router.get(
-  '/get-DetailsforStore', 
+  '/get-DetailsforStore',
   isAuthenticated,
   deviceController.getDetailsForStore
 );

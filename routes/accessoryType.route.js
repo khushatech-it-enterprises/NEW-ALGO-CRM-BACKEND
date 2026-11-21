@@ -14,11 +14,11 @@ router.get('/export-accessory-types', isAuthenticated, accessoryTypeController.e
 router.get('/get-all-accessory-types', isAuthenticated, accessoryTypeController.getAllAccessoryTypes);
 
 // CRUD routes
-router.post('/create-accessory-type', isAuthenticated, authorizeRoles('superAdmin', 'admin'), accessoryTypeController.createAccessoryType);
-router.patch('/update-accessory-type/:id', isAuthenticated, authorizeRoles('superAdmin', 'admin'), accessoryTypeController.updateAccessoryType);
-router.delete('/delete/:id', isAuthenticated, authorizeRoles('superAdmin', 'admin'), accessoryTypeController.deleteAccessoryType);
+router.post('/create-accessory-type', isAuthenticated, authorizeRoles('superAdmin', 'admin', 'store', 'r&d'), accessoryTypeController.createAccessoryType);
+router.patch('/update-accessory-type/:id', isAuthenticated, authorizeRoles('superAdmin', 'admin', 'store', 'r&d'), accessoryTypeController.updateAccessoryType);
+router.delete('/delete/:id', isAuthenticated, authorizeRoles('superAdmin', 'admin', 'store', 'r&d'), accessoryTypeController.deleteAccessoryType);
 
 // Seed default route
-router.post('/seed-default-accessory-types', isAuthenticated, authorizeRoles('superAdmin', 'admin'), accessoryTypeController.seedDefaultAccessoryTypes);
+router.post('/seed-default-accessory-types', isAuthenticated, authorizeRoles('superAdmin', 'admin', 'store', 'r&d'), accessoryTypeController.seedDefaultAccessoryTypes);
 
 module.exports = router;
