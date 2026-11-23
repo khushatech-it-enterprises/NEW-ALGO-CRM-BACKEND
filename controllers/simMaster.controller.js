@@ -20,15 +20,23 @@ function getAssignedToModelFromStatus(status) {
 
 function normalizeDateInputToISODateString(val) {
   if (!val) return "";
+  if (typeof val === "string") val = val.trim();
 
   // already ISO date
   if (typeof val === "string" && /^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
 
-  // handle "DD/MM/YYYY"
-  if (typeof val === "string" && val.includes("/")) {
-    const [dd, mm, yyyy] = val.split("/");
-    if (dd && mm && yyyy)
-      return `${yyyy}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+  // handle "DD/MM/YYYY", "DD-MM-YYYY", "YYYY/MM/DD", etc.
+  if (typeof val === "string" && (val.includes("/") || val.includes("-"))) {
+    const parts = val.split(/[-/]/).map((p) => p.trim());
+    if (parts.length === 3) {
+      if (parts[0].length === 4) {
+        const [yyyy, mm, dd] = parts;
+        return `${yyyy}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+      } else if (parts[2].length === 4) {
+        const [dd, mm, yyyy] = parts;
+        return `${yyyy}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+      }
+    }
   }
 
   // handle date object / other string
@@ -688,17 +696,59 @@ exports.bulkCreateSimMasters = async (req, res) => {
       });
     }
 
-    // Map fields to match the model schema and handle monthlyDate conversion
-    const sims = rawSims.map((sim) => ({
-      ...sim,
-      monthlyBillingDate: sim.monthlyBillingDate || sim.monthlyDate,
-      purchaseDate: sim.purchaseDate ? new Date(sim.purchaseDate) : undefined,
-      isSimActivated:
-        sim.isSimActivated === true ||
-        sim.isSimActivated === "true" ||
-        sim.isSimActivated === "Yes" ||
-        sim.isSimActivated === "yes",
-    }));
+    // Map fields to match the model schema, trim strings, and normalize dates
+    const sims = rawSims.map((sim) => {
+      const trimmedSim = {};
+      for (const [key, value] of Object.entries(sim)) {
+        trimmedSim[key] = typeof value === "string" ? value.trim() : value;
+      }
+
+      // Normalize purchaseDate to valid Date object or undefined
+      let purchaseDate = undefined;
+      const normalizedPurchaseDateStr = normalizeDateInputToISODateString(
+        trimmedSim.purchaseDate
+      );
+      if (normalizedPurchaseDateStr) {
+        const pd = new Date(normalizedPurchaseDateStr);
+        if (!isNaN(pd.getTime())) purchaseDate = pd;
+      }
+
+      // Normalize activationDate to YYYY-MM-DD string
+      const activationDate = normalizeDateInputToISODateString(
+        trimmedSim.activationDate
+      );
+
+      // Determine isSimActivated
+      const isSimActivated = Boolean(
+        activationDate ||
+        trimmedSim.isSimActivated === true ||
+        trimmedSim.isSimActivated === "true" ||
+        trimmedSim.isSimActivated === "Yes" ||
+        trimmedSim.isSimActivated === "yes" ||
+        trimmedSim.isSimActivated === "Activated" ||
+        trimmedSim.isSimActivated === "activated"
+      );
+
+      const status = (trimmedSim.status || "stock").toLowerCase();
+
+      return {
+        ...trimmedSim,
+        status: status || "stock",
+        monthlyBillingDate:
+          trimmedSim.monthlyBillingDate || trimmedSim.monthlyDate,
+        purchaseDate,
+        activationDate,
+        isSimActivated,
+        stockEnteredAt: status === "stock" ? new Date() : undefined,
+        statusHistory: [
+          {
+            status: status || "stock",
+            changedAt: new Date(),
+            changedBy: req.user?.name || req.user?.email || "system",
+          },
+        ],
+      };
+    });
 
     // Clean up empty strings for enums
     const cleanedSims = sims.map((sim) => {
