@@ -1,5 +1,6 @@
 const express = require("express");
 const deviceController = require("../controllers/device.cntroller");
+const bulkPairingController = require("../controllers/bulkPairing.controller");
 const { isAuthenticated, authorizeRoles } = require("../middleware/auth.middleware");
 
 const router = express.Router();
@@ -60,5 +61,22 @@ router.post(
   isAuthenticated,
   deviceController.createNewMainData
 )
+
+// ── Bulk Pairing ───────────────────────────────────────────────────────────
+// GET  – download template Excel with server & client dropdowns
+router.get(
+  '/bulk-pairing-template',
+  isAuthenticated,
+  bulkPairingController.downloadTemplate
+);
+
+// POST – upload filled Excel and perform pairing
+router.post(
+  '/bulk-pairing-import',
+  isAuthenticated,
+  authorizeRoles('superAdmin', 'admin', 'store'),
+  bulkPairingController.uploadExcelMiddleware,
+  bulkPairingController.importBulkPairing
+);
 
 module.exports = router;
