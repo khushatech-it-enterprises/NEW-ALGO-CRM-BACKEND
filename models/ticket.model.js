@@ -416,6 +416,16 @@ const ticketSchema = new mongoose.Schema({
     ref: 'TicketCloser',
   },
 
+  // Reinstallation vehicle swap in Store Data (MainData) tracking
+  isReinstallationVehicleSwapped: {
+    type: Boolean,
+    default: false,
+  },
+  reinstallationSwappedAt: {
+    type: Date,
+    default: null,
+  },
+
 }, {
   timestamps: true,
 });
