@@ -1194,10 +1194,18 @@ exports.bulkCreateDeviceMasters = async (req, res) => {
   }
 };
 
+const DEVICE_TESTED_OK_BULK_STATUSES = [
+  "sold to customer",
+  "send to customer",
+  "with technician",
+  "with cse",
+  "foc",
+];
+
 // ✅ Get stock device count grouped by deviceModel
 // If clientId is provided (and is a valid ObjectId, not "all"), only count devices linked to that client via MainData store records
 // If clientId is "all" or missing, return ALL stock devices grouped by model
-// If status is "sold to customer" or "send to customer", only count stock devices with testingStatus as "tested ok"
+// If status is in DEVICE_TESTED_OK_BULK_STATUSES, only count stock devices with testingStatus as "tested ok"
 // If status is "testing" (R&D / Testing), only count stock devices with testingStatus not equal to "tested ok"
 exports.getStockCountByType = async (req, res) => {
   const { clientId } = req.params;
@@ -1206,7 +1214,7 @@ exports.getStockCountByType = async (req, res) => {
   try {
     let matchStage = { status: "stock" };
 
-    if (status === "sold to customer" || status === "send to customer") {
+    if (DEVICE_TESTED_OK_BULK_STATUSES.includes(status)) {
       matchStage.testingStatus = "tested ok";
     } else if (status === "testing") {
       matchStage.testingStatus = { $ne: "tested ok" };
@@ -1271,7 +1279,7 @@ exports.getStockDevicesByModel = async (req, res) => {
       deviceFilter.deviceModel = deviceModel;
     }
 
-    if (status === "sold to customer" || status === "send to customer") {
+    if (DEVICE_TESTED_OK_BULK_STATUSES.includes(status)) {
       deviceFilter.testingStatus = "tested ok";
     } else if (status === "testing") {
       deviceFilter.testingStatus = { $ne: "tested ok" };
@@ -1425,8 +1433,10 @@ exports.bulkAssignStatus = async (req, res) => {
         });
       }
 
-      // Restrict sending devices to customer if testingStatus is not "tested ok"
-      if (targetStatus === "sold to customer") {
+      const requiresTestedOk = DEVICE_TESTED_OK_BULK_STATUSES.includes(targetStatus);
+
+      // Restrict assigning devices to customer/technician/CSE/FOC if testingStatus is not "tested ok"
+      if (requiresTestedOk) {
         const nonTestedOk = await DeviceMasterModel.find({
           _id: { $in: objectIds },
           testingStatus: { $ne: "tested ok" },
@@ -1441,7 +1451,7 @@ exports.bulkAssignStatus = async (req, res) => {
             .join(", ");
           return res.status(400).json({
             success: false,
-            message: `Cannot assign to customer: ${nonTestedOk.length} device(s) do not have testingStatus as "tested ok" [${samples}${nonTestedOk.length > 5 ? "..." : ""}]. Only devices tested OK can be sold to customer.`,
+            message: `Cannot assign (${targetStatus}): ${nonTestedOk.length} device(s) do not have testingStatus as "tested ok" [${samples}${nonTestedOk.length > 5 ? "..." : ""}]. Only devices tested OK can be assigned.`,
           });
         }
       }
@@ -1472,7 +1482,7 @@ exports.bulkAssignStatus = async (req, res) => {
         _id: { $in: objectIds },
         status: "stock",
       };
-      if (targetStatus === "sold to customer") {
+      if (requiresTestedOk) {
         validFilter.testingStatus = "tested ok";
       } else if (targetStatus === "testing") {
         validFilter.testingStatus = { $ne: "tested ok" };
@@ -1485,7 +1495,7 @@ exports.bulkAssignStatus = async (req, res) => {
       if (validDevices.length === 0) {
         return res.status(400).json({
           success: false,
-          message: targetStatus === "sold to customer"
+          message: requiresTestedOk
             ? "None of the selected devices are in stock with testingStatus 'tested ok'"
             : targetStatus === "testing"
               ? "None of the selected devices are in stock with testing status other than 'tested ok'"
@@ -1512,12 +1522,13 @@ exports.bulkAssignStatus = async (req, res) => {
         });
       }
 
+      const requiresTestedOk = DEVICE_TESTED_OK_BULK_STATUSES.includes(targetStatus);
       // Build device filter — optionally scoped to client's MainData-linked devices
       const deviceFilter = { status: "stock" };
       if (deviceModel && deviceModel !== "all") {
         deviceFilter.deviceModel = deviceModel;
       }
-      if (targetStatus === "sold to customer") {
+      if (requiresTestedOk) {
         deviceFilter.testingStatus = "tested ok";
       } else if (targetStatus === "testing") {
         deviceFilter.testingStatus = { $ne: "tested ok" };
