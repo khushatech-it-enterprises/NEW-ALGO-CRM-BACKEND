@@ -59,6 +59,28 @@ router.put(
   rdTestingController.rdTestRepairableSim
 );
 
+// Bulk assign — get stock counts grouped by simType
+router.post(
+  "/stock-count-by-type/:clientId",
+  isAuthenticated,
+  simMasterController.getStockCountByType
+);
+
+// Bulk assign — preview actual SIM IDs for a given simType + limit
+router.get(
+  "/stock-sims-by-type",
+  isAuthenticated,
+  simMasterController.getStockSimsByType
+);
+
+// Bulk multi-status assign — assign N stock SIMs to any status + person
+router.post(
+  "/bulk-assign-status",
+  isAuthenticated,
+  authorizeRoles("superAdmin", "admin", "store"),
+  simMasterController.bulkAssignStatus
+);
+
 module.exports = router;
 
 

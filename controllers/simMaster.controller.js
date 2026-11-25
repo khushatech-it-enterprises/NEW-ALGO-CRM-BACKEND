@@ -821,3 +821,302 @@ exports.bulkCreateSimMasters = async (req, res) => {
     });
   }
 };
+
+// ✅ Get stock SIM count grouped by simType
+exports.getStockCountByType = async (req, res) => {
+  const { clientId } = req.params;
+  const status = req.body?.status || req.query?.status;
+  try {
+    const matchStage = { status: "stock" };
+
+    if (status === "sold to customer" || status === "send to customer") {
+      matchStage.testingStatus = "tested ok";
+    } else if (status === "testing") {
+      matchStage.testingStatus = { $ne: "tested ok" };
+    }
+
+    if (clientId && clientId !== "all" && mongoose.Types.ObjectId.isValid(clientId)) {
+      const MainData = require("../models/mainData.model");
+      const storeRecords = await MainData.find(
+        { company: new mongoose.Types.ObjectId(clientId), simDetails: { $ne: null } },
+        { simDetails: 1, _id: 0 }
+      ).lean();
+
+      const linkedSimIds = storeRecords.map((r) => r.simDetails).filter(Boolean);
+      matchStage._id = { $in: linkedSimIds };
+    }
+
+    const counts = await simMasterModel.aggregate([
+      { $match: matchStage },
+      {
+        $group: {
+          _id: "$simType",
+          count: { $sum: 1 },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]);
+
+    const result = counts.map((c) => ({
+      simType: c._id || "Unknown",
+      count: c.count,
+    }));
+
+    res.status(200).json({ success: true, data: result });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ✅ Preview stock SIMs by simType (returns actual SIM records for bulk-assign preview)
+exports.getStockSimsByType = async (req, res) => {
+  try {
+    const { simType, limit, clientId, status } = req.query;
+    if (!simType) {
+      return res.status(400).json({ success: false, message: "simType is required" });
+    }
+
+    const qty = Math.min(parseInt(limit, 10) || 500, 20000);
+
+    const simFilter = { status: "stock" };
+    if (simType && simType !== "all") {
+      simFilter.simType =
+        simType === "Unknown" ? { $in: [null, "", "Unknown"] } : simType;
+    }
+
+    if (status === "sold to customer" || status === "send to customer") {
+      simFilter.testingStatus = "tested ok";
+    } else if (status === "testing") {
+      simFilter.testingStatus = { $ne: "tested ok" };
+    }
+
+    if (clientId && clientId !== "all" && mongoose.Types.ObjectId.isValid(clientId)) {
+      const MainData = require("../models/mainData.model");
+      const storeRecords = await MainData.find(
+        { company: new mongoose.Types.ObjectId(clientId), simDetails: { $ne: null } },
+        { simDetails: 1, _id: 0 }
+      ).lean();
+      const linkedIds = storeRecords.map((r) => r.simDetails).filter(Boolean);
+      simFilter._id = { $in: linkedIds };
+    }
+
+    const sims = await simMasterModel
+      .find(simFilter)
+      .sort({ createdAt: -1 })
+      .limit(qty)
+      .select("simNumber mobileNumber simProvider simType testingStatus createdAt")
+      .lean();
+
+    const totalAvailable = await simMasterModel.countDocuments(simFilter);
+
+    res.status(200).json({ success: true, sims, totalAvailable });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ✅ Bulk assign stock SIMs to any status (sold to customer, with technician, with cse, foc, testing/r&d)
+exports.bulkAssignStatus = async (req, res) => {
+  try {
+    const { simType, quantity, status, assignedTo, clientId, simIds: manualSimIds } = req.body;
+
+    const targetStatus = status === "send to customer" ? "sold to customer" : status;
+
+    const VALID_STATUSES = [
+      "testing",
+      "sold to customer",
+      "send to customer",
+      "with technician",
+      "with cse",
+      "foc",
+    ];
+
+    if (!status || !assignedTo) {
+      return res.status(400).json({
+        success: false,
+        message: "status and assignedTo are required",
+      });
+    }
+
+    if (!VALID_STATUSES.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid status. Must be one of: ${VALID_STATUSES.join(", ")}`,
+      });
+    }
+
+    const assignedToModel = getAssignedToModelFromStatus(targetStatus);
+
+    let simIds;
+
+    if (manualSimIds && Array.isArray(manualSimIds) && manualSimIds.length > 0) {
+      const objectIds = manualSimIds
+        .filter((id) => mongoose.Types.ObjectId.isValid(id))
+        .map((id) => new mongoose.Types.ObjectId(id));
+
+      if (objectIds.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "No valid SIM IDs provided",
+        });
+      }
+
+      if (targetStatus === "sold to customer") {
+        const nonTestedOk = await simMasterModel
+          .find({
+            _id: { $in: objectIds },
+            testingStatus: { $ne: "tested ok" },
+          })
+          .select("simNumber mobileNumber testingStatus")
+          .lean();
+
+        if (nonTestedOk.length > 0) {
+          const samples = nonTestedOk
+            .slice(0, 5)
+            .map((s) => `${s.simNumber || s.mobileNumber || s._id} (${s.testingStatus || "not tested"})`)
+            .join(", ");
+          return res.status(400).json({
+            success: false,
+            message: `Cannot assign to customer: ${nonTestedOk.length} SIM(s) do not have testingStatus as "tested ok" [${samples}${nonTestedOk.length > 5 ? "..." : ""}]. Only SIMs tested OK can be sold to customer.`,
+          });
+        }
+      }
+
+      if (targetStatus === "testing") {
+        const alreadyTestedOk = await simMasterModel
+          .find({
+            _id: { $in: objectIds },
+            testingStatus: "tested ok",
+          })
+          .select("simNumber mobileNumber testingStatus")
+          .lean();
+
+        if (alreadyTestedOk.length > 0) {
+          const samples = alreadyTestedOk
+            .slice(0, 5)
+            .map((s) => `${s.simNumber || s.mobileNumber || s._id}`)
+            .join(", ");
+          return res.status(400).json({
+            success: false,
+            message: `Cannot assign to R&D / Testing: ${alreadyTestedOk.length} SIM(s) already have testingStatus as "tested ok" [${samples}${alreadyTestedOk.length > 5 ? "..." : ""}]. Only untested SIMs can be assigned for R&D testing.`,
+          });
+        }
+      }
+
+      const validFilter = {
+        _id: { $in: objectIds },
+        status: "stock",
+      };
+      if (targetStatus === "sold to customer") {
+        validFilter.testingStatus = "tested ok";
+      } else if (targetStatus === "testing") {
+        validFilter.testingStatus = { $ne: "tested ok" };
+      }
+
+      const validSims = await simMasterModel
+        .find(validFilter)
+        .select("_id")
+        .lean();
+
+      if (validSims.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: targetStatus === "sold to customer"
+            ? "None of the selected SIMs are in stock with testingStatus 'tested ok'"
+            : targetStatus === "testing"
+              ? "None of the selected SIMs are in stock with testing status other than 'tested ok'"
+              : "None of the selected SIMs are in stock",
+        });
+      }
+
+      simIds = validSims.map((s) => s._id);
+    } else {
+      if (!simType || !quantity) {
+        return res.status(400).json({
+          success: false,
+          message: "Either simIds[] or (simType + quantity) are required",
+        });
+      }
+
+      const qty = parseInt(quantity, 10);
+      if (isNaN(qty) || qty <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: "quantity must be a positive number",
+        });
+      }
+
+      const simFilter = { status: "stock" };
+      if (simType && simType !== "all") {
+        simFilter.simType =
+          simType === "Unknown" ? { $in: [null, "", "Unknown"] } : simType;
+      }
+      if (targetStatus === "sold to customer") {
+        simFilter.testingStatus = "tested ok";
+      } else if (targetStatus === "testing") {
+        simFilter.testingStatus = { $ne: "tested ok" };
+      }
+      if (clientId && clientId !== "all" && mongoose.Types.ObjectId.isValid(clientId)) {
+        const MainData = require("../models/mainData.model");
+        const storeRecords = await MainData.find(
+          { company: new mongoose.Types.ObjectId(clientId), simDetails: { $ne: null } },
+          { simDetails: 1, _id: 0 }
+        ).lean();
+        const linkedIds = storeRecords.map((r) => r.simDetails).filter(Boolean);
+        simFilter._id = { $in: linkedIds };
+      }
+
+      const sims = await simMasterModel
+        .find(simFilter)
+        .sort({ createdAt: -1 })
+        .limit(qty)
+        .select("_id")
+        .lean();
+
+      if (sims.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: targetStatus === "sold to customer"
+            ? `No stock SIMs with testingStatus 'tested ok' found for type "${simType}"${clientId && clientId !== "all" ? " for this client" : ""}`
+            : targetStatus === "testing"
+              ? `No stock SIMs without 'tested ok' status found for type "${simType}"${clientId && clientId !== "all" ? " for this client" : ""}`
+              : `No stock SIMs found for type "${simType}"${clientId && clientId !== "all" ? " for this client" : ""}`,
+        });
+      }
+
+      simIds = sims.map((s) => s._id);
+    }
+
+    const changedBy = req.user?.name || req.user?.email || "system";
+
+    await simMasterModel.updateMany(
+      { _id: { $in: simIds } },
+      {
+        $set: {
+          status: targetStatus,
+          assignedTo: new mongoose.Types.ObjectId(assignedTo),
+          assignedToModel: assignedToModel,
+        },
+        $push: {
+          statusHistory: {
+            status: targetStatus,
+            changedAt: new Date(),
+            changedBy: `${changedBy} - Bulk Assign`,
+          },
+        },
+      }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: `${simIds.length} SIMs assigned successfully`,
+      assignedCount: simIds.length,
+      status: targetStatus,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};

@@ -912,3 +912,333 @@ exports.deleteAccessoryMasters = async (req, res) => {
     });
   }
 };
+
+function getAccessoryAssignedToModel(status) {
+  if (status === "with technician") return "Technician";
+  if (status === "with cse" || status === "testing") return "Employee";
+  if (status === "sold to customer" || status === "customer demo" || status === "foc") {
+    return "QstClient";
+  }
+  return null;
+}
+
+// ✅ Get stock accessory count grouped by accessoryModel
+exports.getStockCountByType = async (req, res) => {
+  const { clientId } = req.params;
+  const status = req.body?.status || req.query?.status;
+  try {
+    const matchStage = { status: "stock" };
+
+    if (status === "sold to customer" || status === "send to customer") {
+      matchStage.testingStatus = "tested ok";
+    } else if (status === "testing") {
+      matchStage.testingStatus = { $ne: "tested ok" };
+    }
+
+    if (clientId && clientId !== "all" && mongoose.Types.ObjectId.isValid(clientId)) {
+      const MainData = require("../models/mainData.model");
+      const storeRecords = await MainData.find(
+        {
+          company: new mongoose.Types.ObjectId(clientId),
+          accessoryDetails: { $exists: true, $ne: [] },
+        },
+        { accessoryDetails: 1, _id: 0 }
+      ).lean();
+
+      const linkedAccessoryIds = storeRecords
+        .flatMap((r) => r.accessoryDetails || [])
+        .filter(Boolean);
+      matchStage._id = { $in: linkedAccessoryIds };
+    }
+
+    const counts = await accessoryMasterModel.aggregate([
+      { $match: matchStage },
+      {
+        $group: {
+          _id: "$accessoryModel",
+          count: { $sum: 1 },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]);
+
+    const result = counts.map((c) => ({
+      accessoryModel: c._id || "Unknown",
+      count: c.count,
+    }));
+
+    res.status(200).json({ success: true, data: result });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ✅ Preview stock accessories by accessoryModel
+exports.getStockAccessoriesByModel = async (req, res) => {
+  try {
+    const { accessoryModel, limit, clientId, status } = req.query;
+    if (!accessoryModel) {
+      return res.status(400).json({ success: false, message: "accessoryModel is required" });
+    }
+
+    const qty = Math.min(parseInt(limit, 10) || 500, 20000);
+
+    const accFilter = { status: "stock" };
+    if (accessoryModel && accessoryModel !== "all") {
+      accFilter.accessoryModel =
+        accessoryModel === "Unknown" ? { $in: [null, "", "Unknown"] } : accessoryModel;
+    }
+
+    if (status === "sold to customer" || status === "send to customer") {
+      accFilter.testingStatus = "tested ok";
+    } else if (status === "testing") {
+      accFilter.testingStatus = { $ne: "tested ok" };
+    }
+
+    if (clientId && clientId !== "all" && mongoose.Types.ObjectId.isValid(clientId)) {
+      const MainData = require("../models/mainData.model");
+      const storeRecords = await MainData.find(
+        {
+          company: new mongoose.Types.ObjectId(clientId),
+          accessoryDetails: { $exists: true, $ne: [] },
+        },
+        { accessoryDetails: 1, _id: 0 }
+      ).lean();
+      const linkedIds = storeRecords
+        .flatMap((r) => r.accessoryDetails || [])
+        .filter(Boolean);
+      accFilter._id = { $in: linkedIds };
+    }
+
+    const accessories = await accessoryMasterModel
+      .find(accFilter)
+      .sort({ createdAt: -1 })
+      .limit(qty)
+      .select("accessoryId accessoryModel accessoryType accessoryManufacturer testingStatus createdAt")
+      .lean();
+
+    const totalAvailable = await accessoryMasterModel.countDocuments(accFilter);
+
+    res.status(200).json({ success: true, accessories, totalAvailable });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ✅ Bulk assign stock accessories to any status
+exports.bulkAssignStatus = async (req, res) => {
+  try {
+    const {
+      accessoryModel,
+      quantity,
+      status,
+      assignedTo,
+      clientId,
+      accessoryIds: manualAccessoryIds,
+    } = req.body;
+
+    const targetStatus = status === "send to customer" ? "sold to customer" : status;
+
+    const VALID_STATUSES = [
+      "testing",
+      "sold to customer",
+      "send to customer",
+      "with technician",
+      "with cse",
+      "foc",
+    ];
+
+    if (!status || !assignedTo) {
+      return res.status(400).json({
+        success: false,
+        message: "status and assignedTo are required",
+      });
+    }
+
+    if (!VALID_STATUSES.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid status. Must be one of: ${VALID_STATUSES.join(", ")}`,
+      });
+    }
+
+    const assignedToModel = getAccessoryAssignedToModel(targetStatus);
+
+    let accessoryIds;
+
+    if (manualAccessoryIds && Array.isArray(manualAccessoryIds) && manualAccessoryIds.length > 0) {
+      const objectIds = manualAccessoryIds
+        .filter((id) => mongoose.Types.ObjectId.isValid(id))
+        .map((id) => new mongoose.Types.ObjectId(id));
+
+      if (objectIds.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "No valid accessory IDs provided",
+        });
+      }
+
+      if (targetStatus === "sold to customer") {
+        const nonTestedOk = await accessoryMasterModel
+          .find({
+            _id: { $in: objectIds },
+            testingStatus: { $ne: "tested ok" },
+          })
+          .select("accessoryId testingStatus")
+          .lean();
+
+        if (nonTestedOk.length > 0) {
+          const samples = nonTestedOk
+            .slice(0, 5)
+            .map((a) => `${a.accessoryId || a._id} (${a.testingStatus || "not tested"})`)
+            .join(", ");
+          return res.status(400).json({
+            success: false,
+            message: `Cannot assign to customer: ${nonTestedOk.length} accessory(s) do not have testingStatus as "tested ok" [${samples}${nonTestedOk.length > 5 ? "..." : ""}]. Only accessories tested OK can be sold to customer.`,
+          });
+        }
+      }
+
+      if (targetStatus === "testing") {
+        const alreadyTestedOk = await accessoryMasterModel
+          .find({
+            _id: { $in: objectIds },
+            testingStatus: "tested ok",
+          })
+          .select("accessoryId testingStatus")
+          .lean();
+
+        if (alreadyTestedOk.length > 0) {
+          const samples = alreadyTestedOk
+            .slice(0, 5)
+            .map((a) => `${a.accessoryId || a._id}`)
+            .join(", ");
+          return res.status(400).json({
+            success: false,
+            message: `Cannot assign to R&D / Testing: ${alreadyTestedOk.length} accessory(s) already have testingStatus as "tested ok" [${samples}${alreadyTestedOk.length > 5 ? "..." : ""}]. Only untested accessories can be assigned for R&D testing.`,
+          });
+        }
+      }
+
+      const validFilter = {
+        _id: { $in: objectIds },
+        status: "stock",
+      };
+      if (targetStatus === "sold to customer") {
+        validFilter.testingStatus = "tested ok";
+      } else if (targetStatus === "testing") {
+        validFilter.testingStatus = { $ne: "tested ok" };
+      }
+
+      const validAccessories = await accessoryMasterModel
+        .find(validFilter)
+        .select("_id")
+        .lean();
+
+      if (validAccessories.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: targetStatus === "sold to customer"
+            ? "None of the selected accessories are in stock with testingStatus 'tested ok'"
+            : targetStatus === "testing"
+              ? "None of the selected accessories are in stock with testing status other than 'tested ok'"
+              : "None of the selected accessories are in stock",
+        });
+      }
+
+      accessoryIds = validAccessories.map((a) => a._id);
+    } else {
+      if (!accessoryModel || !quantity) {
+        return res.status(400).json({
+          success: false,
+          message: "Either accessoryIds[] or (accessoryModel + quantity) are required",
+        });
+      }
+
+      const qty = parseInt(quantity, 10);
+      if (isNaN(qty) || qty <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: "quantity must be a positive number",
+        });
+      }
+
+      const accFilter = { status: "stock" };
+      if (accessoryModel && accessoryModel !== "all") {
+        accFilter.accessoryModel =
+          accessoryModel === "Unknown" ? { $in: [null, "", "Unknown"] } : accessoryModel;
+      }
+      if (targetStatus === "sold to customer") {
+        accFilter.testingStatus = "tested ok";
+      } else if (targetStatus === "testing") {
+        accFilter.testingStatus = { $ne: "tested ok" };
+      }
+      if (clientId && clientId !== "all" && mongoose.Types.ObjectId.isValid(clientId)) {
+        const MainData = require("../models/mainData.model");
+        const storeRecords = await MainData.find(
+          {
+            company: new mongoose.Types.ObjectId(clientId),
+            accessoryDetails: { $exists: true, $ne: [] },
+          },
+          { accessoryDetails: 1, _id: 0 }
+        ).lean();
+        const linkedIds = storeRecords
+          .flatMap((r) => r.accessoryDetails || [])
+          .filter(Boolean);
+        accFilter._id = { $in: linkedIds };
+      }
+
+      const accessories = await accessoryMasterModel
+        .find(accFilter)
+        .sort({ createdAt: -1 })
+        .limit(qty)
+        .select("_id")
+        .lean();
+
+      if (accessories.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: targetStatus === "sold to customer"
+            ? `No stock accessories with testingStatus 'tested ok' found for model "${accessoryModel}"${clientId && clientId !== "all" ? " for this client" : ""}`
+            : targetStatus === "testing"
+              ? `No stock accessories without 'tested ok' status found for model "${accessoryModel}"${clientId && clientId !== "all" ? " for this client" : ""}`
+              : `No stock accessories found for model "${accessoryModel}"${clientId && clientId !== "all" ? " for this client" : ""}`,
+        });
+      }
+
+      accessoryIds = accessories.map((a) => a._id);
+    }
+
+    const changedBy = req.user?.name || req.user?.email || "system";
+
+    await accessoryMasterModel.updateMany(
+      { _id: { $in: accessoryIds } },
+      {
+        $set: {
+          status: targetStatus,
+          assignedTo: new mongoose.Types.ObjectId(assignedTo),
+          assignedToModel: assignedToModel,
+        },
+        $push: {
+          statusHistory: {
+            status: targetStatus,
+            changedAt: new Date(),
+            changedBy: `${changedBy} - Bulk Assign`,
+          },
+        },
+      }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: `${accessoryIds.length} accessories assigned successfully`,
+      assignedCount: accessoryIds.length,
+      status: targetStatus,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
