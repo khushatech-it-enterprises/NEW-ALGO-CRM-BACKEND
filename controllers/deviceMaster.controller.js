@@ -1488,8 +1488,8 @@ exports.bulkAssignStatus = async (req, res) => {
           message: targetStatus === "sold to customer"
             ? "None of the selected devices are in stock with testingStatus 'tested ok'"
             : targetStatus === "testing"
-            ? "None of the selected devices are in stock with testing status other than 'tested ok'"
-            : "None of the selected devices are in stock",
+              ? "None of the selected devices are in stock with testing status other than 'tested ok'"
+              : "None of the selected devices are in stock",
         });
       }
 
@@ -1545,8 +1545,8 @@ exports.bulkAssignStatus = async (req, res) => {
           message: targetStatus === "sold to customer"
             ? `No stock devices with testingStatus 'tested ok' found for model "${deviceModel}"${clientId && clientId !== "all" ? " for this client" : ""}`
             : targetStatus === "testing"
-            ? `No stock devices without 'tested ok' status found for model "${deviceModel}"${clientId && clientId !== "all" ? " for this client" : ""}`
-            : `No stock devices found for model "${deviceModel}"${clientId && clientId !== "all" ? " for this client" : ""}`,
+              ? `No stock devices without 'tested ok' status found for model "${deviceModel}"${clientId && clientId !== "all" ? " for this client" : ""}`
+              : `No stock devices found for model "${deviceModel}"${clientId && clientId !== "all" ? " for this client" : ""}`,
         });
       }
 

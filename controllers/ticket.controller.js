@@ -71,8 +71,6 @@ const createTicket = async (req, res) => {
       // here we get all file urls which uploaded during ticket creation
     } = req.body;
 
-
-    console.log("☑️☑️☑️ :", req.body);
     // handle empty string come for objectId
     const technician = rawTechnician === "" ? undefined : rawTechnician;
 
@@ -396,8 +394,6 @@ const createTicket = async (req, res) => {
           techExists,
           securityCode // Pass the security code to the email generator
         );
-
-        console.log(techExists.email, "5555555555555555");
 
         await sendEmail({
           to: techExists.email,
@@ -4655,8 +4651,6 @@ const getAllTickets = async (req, res) => {
         delayed: delayedCount,
       },
     };
-    console.log(statsss);
-    console.log(allTotalTicketCounts, "jkjkjkjk");
 
     res.status(200).json({
       success: true,
@@ -5969,22 +5963,69 @@ const swapReinstallationVehicleInStoreData = async ({
   clientId,
   oldVehicleNumbers = [],
   newVehicleNumbers = [],
+  fallbackOldVehicles = [],
 }) => {
   const results = [];
   const count = Math.min(oldVehicleNumbers.length, newVehicleNumbers.length);
+  const resolvedOldList = [...oldVehicleNumbers];
 
   for (let i = 0; i < count; i++) {
-    const oldVeh = (oldVehicleNumbers[i] || "").trim();
+    let oldVeh = (oldVehicleNumbers[i] || "").trim();
     const newVeh = (newVehicleNumbers[i] || "").trim();
 
-    if (!oldVeh || !newVeh || oldVeh.toUpperCase() === newVeh.toUpperCase()) {
+    if (!newVeh) continue;
+
+    const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const newRegExp = new RegExp(`^${escapeRegex(newVeh)}$`, "i");
+
+    // 1. Check if newVeh is already in MainData
+    let alreadyDoc = null;
+    if (clientId) {
+      alreadyDoc = await MainData.findOne({
+        company: clientId,
+        registrationNumber: { $regex: newRegExp },
+      });
+    }
+    if (!alreadyDoc) {
+      alreadyDoc = await MainData.findOne({
+        registrationNumber: { $regex: newRegExp },
+      });
+    }
+
+    if (alreadyDoc) {
+      console.log(
+        `[ReinstallationSwap] MainData already has new vehicle "${newVeh}" (_id: ${alreadyDoc._id}). No swap needed.`
+      );
+      results.push({
+        oldVehicle: oldVeh,
+        newVehicle: newVeh,
+        mainDataId: alreadyDoc._id,
+        status: "already_swapped",
+      });
       continue;
     }
 
-    const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // 2. If oldVeh is identical to newVeh or empty, look for a candidate from fallbackOldVehicles
+    if (!oldVeh || oldVeh.toUpperCase() === newVeh.toUpperCase()) {
+      const candidate = (fallbackOldVehicles || []).find(
+        (fb) => fb && fb.toUpperCase() !== newVeh.toUpperCase()
+      );
+      if (candidate) {
+        console.log(
+          `[ReinstallationSwap] oldVeh identical to newVeh ("${newVeh}"). Using fallback candidate "${candidate}".`
+        );
+        oldVeh = candidate;
+        resolvedOldList[i] = candidate;
+      }
+    }
+
+    if (!oldVeh || oldVeh.toUpperCase() === newVeh.toUpperCase()) {
+      continue;
+    }
+
     const oldRegExp = new RegExp(`^${escapeRegex(oldVeh)}$`, "i");
 
-    // 1. Try finding MainData with both company (client) and registrationNumber
+    // 3. Try finding MainData with both company (client) and registrationNumber
     let mainDataDoc = null;
     if (clientId) {
       mainDataDoc = await MainData.findOne({
@@ -5993,11 +6034,38 @@ const swapReinstallationVehicleInStoreData = async ({
       });
     }
 
-    // 2. If not found by client, try finding by registrationNumber across MainData
+    // 4. If not found by client, try finding by registrationNumber across MainData
     if (!mainDataDoc) {
       mainDataDoc = await MainData.findOne({
         registrationNumber: { $regex: oldRegExp },
       });
+    }
+
+    // 5. If still not found, check remaining fallbackOldVehicles
+    if (!mainDataDoc && Array.isArray(fallbackOldVehicles)) {
+      for (const fb of fallbackOldVehicles) {
+        if (!fb || fb.toUpperCase() === newVeh.toUpperCase()) continue;
+        const fbRegExp = new RegExp(`^${escapeRegex(fb)}$`, "i");
+        if (clientId) {
+          mainDataDoc = await MainData.findOne({
+            company: clientId,
+            registrationNumber: { $regex: fbRegExp },
+          });
+        }
+        if (!mainDataDoc) {
+          mainDataDoc = await MainData.findOne({
+            registrationNumber: { $regex: fbRegExp },
+          });
+        }
+        if (mainDataDoc) {
+          console.log(
+            `[ReinstallationSwap] Found MainData using fallback vehicle "${fb}" (_id: ${mainDataDoc._id})`
+          );
+          oldVeh = fb;
+          resolvedOldList[i] = fb;
+          break;
+        }
+      }
     }
 
     if (mainDataDoc) {
@@ -6015,45 +6083,18 @@ const swapReinstallationVehicleInStoreData = async ({
         status: "swapped",
       });
     } else {
-      // Check if it's already updated to newVeh
-      const newRegExp = new RegExp(`^${escapeRegex(newVeh)}$`, "i");
-      let alreadyDoc = null;
-      if (clientId) {
-        alreadyDoc = await MainData.findOne({
-          company: clientId,
-          registrationNumber: { $regex: newRegExp },
-        });
-      }
-      if (!alreadyDoc) {
-        alreadyDoc = await MainData.findOne({
-          registrationNumber: { $regex: newRegExp },
-        });
-      }
-
-      if (alreadyDoc) {
-        console.log(
-          `[ReinstallationSwap] MainData already has new vehicle "${newVeh}" (_id: ${alreadyDoc._id}). No swap needed.`
-        );
-        results.push({
-          oldVehicle: oldVeh,
-          newVehicle: newVeh,
-          mainDataId: alreadyDoc._id,
-          status: "already_swapped",
-        });
-      } else {
-        console.warn(
-          `[ReinstallationSwap] MainData record not found for old vehicle "${oldVeh}" (clientId: ${clientId})`
-        );
-        results.push({
-          oldVehicle: oldVeh,
-          newVehicle: newVeh,
-          status: "not_found",
-        });
-      }
+      console.warn(
+        `[ReinstallationSwap] MainData record not found for old vehicle "${oldVeh}" (clientId: ${clientId})`
+      );
+      results.push({
+        oldVehicle: oldVeh,
+        newVehicle: newVeh,
+        status: "not_found",
+      });
     }
   }
 
-  return results;
+  return { results, resolvedOldList };
 };
 
 // ── Helper: Revert reinstallation new vehicle back to old vehicle in Store Data (MainData) ──
@@ -6061,15 +6102,27 @@ const revertReinstallationVehicleInStoreData = async ({
   clientId,
   oldVehicleNumbers = [],
   newVehicleNumbers = [],
+  fallbackOldVehicles = [],
 }) => {
   const results = [];
   const count = Math.min(oldVehicleNumbers.length, newVehicleNumbers.length);
 
   for (let i = 0; i < count; i++) {
-    const oldVeh = (oldVehicleNumbers[i] || "").trim();
+    let oldVeh = (oldVehicleNumbers[i] || "").trim();
     const newVeh = (newVehicleNumbers[i] || "").trim();
 
-    if (!oldVeh || !newVeh || oldVeh.toUpperCase() === newVeh.toUpperCase()) {
+    if (!newVeh) continue;
+
+    if (!oldVeh || oldVeh.toUpperCase() === newVeh.toUpperCase()) {
+      const candidate = (fallbackOldVehicles || []).find(
+        (fb) => fb && fb.toUpperCase() !== newVeh.toUpperCase()
+      );
+      if (candidate) {
+        oldVeh = candidate;
+      }
+    }
+
+    if (!oldVeh || oldVeh.toUpperCase() === newVeh.toUpperCase()) {
       continue;
     }
 
@@ -6635,21 +6688,52 @@ const updateTicket = async (req, res) => {
         qstClient ||
         (existingTicket.qstClientName?._id || existingTicket.qstClientName);
 
+      const fallbackOldVehicles = [];
+      if (existingTicket.registrationNumber) {
+        existingTicket.registrationNumber
+          .split(",")
+          .map((v) => v.trim())
+          .filter(Boolean)
+          .forEach((v) => {
+            if (!fallbackOldVehicles.includes(v)) fallbackOldVehicles.push(v);
+          });
+      }
+      if (Array.isArray(existingTicket.oldVehicleNumber)) {
+        existingTicket.oldVehicleNumber.forEach((v) => {
+          const trimmed = (v || "").trim();
+          if (trimmed && !fallbackOldVehicles.includes(trimmed)) {
+            fallbackOldVehicles.push(trimmed);
+          }
+        });
+      }
+
       if (isWorkDone) {
         // Swap old vehicle number with new vehicle number in Store Data (MainData)
-        await swapReinstallationVehicleInStoreData({
-          clientId,
-          oldVehicleNumbers: oldVehicleNumbersArray,
-          newVehicleNumbers: newVehicleNumbersArray,
-        });
-        updateData.isReinstallationVehicleSwapped = true;
-        updateData.reinstallationSwappedAt = new Date();
+        const { results: swapResults, resolvedOldList } =
+          await swapReinstallationVehicleInStoreData({
+            clientId,
+            oldVehicleNumbers: oldVehicleNumbersArray,
+            newVehicleNumbers: newVehicleNumbersArray,
+            fallbackOldVehicles,
+          });
+
+        const hasSwappedOrAlready = (swapResults || []).some(
+          (r) => r.status === "swapped" || r.status === "already_swapped"
+        );
+        if (hasSwappedOrAlready) {
+          updateData.isReinstallationVehicleSwapped = true;
+          updateData.reinstallationSwappedAt = new Date();
+          if (Array.isArray(resolvedOldList) && resolvedOldList.length > 0) {
+            updateData.oldVehicleNumber = resolvedOldList;
+          }
+        }
       } else if (existingTicket.isReinstallationVehicleSwapped) {
         // If status changed away from "work done" (e.g. to "work not done"), revert the swap
         await revertReinstallationVehicleInStoreData({
           clientId,
           oldVehicleNumbers: oldVehicleNumbersArray,
           newVehicleNumbers: newVehicleNumbersArray,
+          fallbackOldVehicles,
         });
         updateData.isReinstallationVehicleSwapped = false;
         updateData.reinstallationSwappedAt = null;

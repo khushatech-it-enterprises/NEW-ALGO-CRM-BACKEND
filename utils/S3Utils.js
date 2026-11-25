@@ -83,9 +83,9 @@ const s3 = new AWS.S3({
 router.post('/generate-presigned-url', async (req, res) => {
   try {
     const { fileName, fileType, isPublic = true } = req.body;
-    
+
     if (!fileName || !fileType) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
         message: 'File name and type are required'
       });
@@ -102,18 +102,17 @@ router.post('/generate-presigned-url', async (req, res) => {
       Expires: 60 * 10, // URL expires in 5 minutes
       // ACL: 'private' // Set appropriate permissions
     };
-  //  if (isPublic) {
-  //     params.CacheControl = 'public, max-age=5184000'; // 60 days in seconds
-  //     params.Metadata = {
-  //       'Cache-Control': 'public, max-age=5184000'
-  //     };
-  //   }
-    console.log('Using S3 bucket:', process.env.AWS_S3_BUCKET_NAME);
+    //  if (isPublic) {
+    //     params.CacheControl = 'public, max-age=5184000'; // 60 days in seconds
+    //     params.Metadata = {
+    //       'Cache-Control': 'public, max-age=5184000'
+    //     };
+    //   }
 
     const presignedUrl = await s3.getSignedUrlPromise('putObject', params);
 
-   // Generate public URL (choose one option below)
-    const publicUrl = process.env.FILE_CDN_URL 
+    // Generate public URL (choose one option below)
+    const publicUrl = process.env.FILE_CDN_URL
       ? `${process.env.FILE_CDN_URL}/${key}`
       : `https://${process.env.AWS_S3_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
 
@@ -121,7 +120,7 @@ router.post('/generate-presigned-url', async (req, res) => {
       success: true,
       url: presignedUrl,
       key: key,
-        publicUrl: publicUrl 
+      publicUrl: publicUrl
     });
   } catch (error) {
     console.error('Error generating presigned URL:', error);

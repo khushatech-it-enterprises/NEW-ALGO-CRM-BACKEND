@@ -4,49 +4,48 @@ const Ticket = require('../models/ticket.model');
 const mongoose = require("mongoose")
 // Get all projects by QST client ID
 exports.getAllProjectsByQstClientId = async (req, res) => {
-    try {
-        const clientId = req.params.clientId;
-        console.log(clientId,"jdshfjhjfhdsfjk");
-        const projects = await Project.find({ qstClient: clientId })
-            .sort({ createdAt: -1 });
+  try {
+    const clientId = req.params.clientId;
+    const projects = await Project.find({ qstClient: clientId })
+      .sort({ createdAt: -1 });
 
-        res.status(200).json({
-            success: true,
-            message:'Get all projects of qstClient successfully',
-            data: projects
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            message: 'Error retrieving projects',
-            error: error.message
-        });
-    }
+    res.status(200).json({
+      success: true,
+      message: 'Get all projects of qstClient successfully',
+      data: projects
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error retrieving projects',
+      error: error.message
+    });
+  }
 };
 
 
 exports.getAllProjects = async (req, res) => {
-    try {
-        const projects = await Project.find()
-            .sort({ createdAt: -1 });
+  try {
+    const projects = await Project.find()
+      .sort({ createdAt: -1 });
 
-            // console.log(projects);
-        res.status(200).json({
-            success: true,
-            message: 'Get all projects successfully',
-            data: projects
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            message: 'Error retrieving projects',
-            error: error.message
-        });
-    }
+    // console.log(projects);
+    res.status(200).json({
+      success: true,
+      message: 'Get all projects successfully',
+      data: projects
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error retrieving projects',
+      error: error.message
+    });
+  }
 };
 
 
- exports.bulkAddProjects = async (req, res) => {
+exports.bulkAddProjects = async (req, res) => {
   try {
     const projects = req.body;
 
@@ -75,14 +74,14 @@ exports.getAllProjects = async (req, res) => {
 // -------------------------------------------------------------
 
 
- 
+
 
 exports.createProject = async (req, res) => {
   try {
     const { qstClient, projectName, description, startDate, endDate } = req.body;
 
     // Validate required fields
-    if (!qstClient || !projectName 
+    if (!qstClient || !projectName
       // || !startDate || !endDate
     ) {
       return res.status(400).json({ success: false, message: 'All required fields must be provided.' });
@@ -102,15 +101,15 @@ exports.createProject = async (req, res) => {
     // }
 
     const existingProject = await Project.findOne({
-  qstClient,
-  projectName: { $regex: new RegExp(`^${projectName.trim()}$`, "i") }
-});
+      qstClient,
+      projectName: { $regex: new RegExp(`^${projectName.trim()}$`, "i") }
+    });
 
-if (existingProject) {
-  return res
-    .status(409)
-    .json({ success: false, message: "A project with this name already exists for the client." });
-}
+    if (existingProject) {
+      return res
+        .status(409)
+        .json({ success: false, message: "A project with this name already exists for the client." });
+    }
 
     const newProject = new Project({
       qstClient,
@@ -141,7 +140,7 @@ exports.updateProject = async (req, res) => {
 
     if (!projectName
       //  || !startDate || !endDate
-      ) {
+    ) {
       return res.status(400).json({ success: false, message: 'Project name, start date, and end date are required.' });
     }
 
@@ -154,7 +153,7 @@ exports.updateProject = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Project not found.' });
     }
 
-     // ✅ Case-insensitive duplicate check for same client, excluding current project
+    // ✅ Case-insensitive duplicate check for same client, excluding current project
     const duplicate = await Project.findOne({
       _id: { $ne: id }, // exclude current project
       qstClient: existingProject.qstClient,
@@ -196,7 +195,7 @@ exports.updateProject = async (req, res) => {
 //     if (!project) {
 //       return res.status(404).json({ success: false, message: 'Project not found.' });
 //     }
-  
+
 
 //     // Check if there are any non-closed tickets associated with this project ID
 //     const openTickets = await Ticket.findOne({ 
@@ -228,58 +227,58 @@ exports.deleteProject = async (req, res) => {
     // Check if project exists
     const project = await Project.findById(id);
     if (!project) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Project not found.' 
+      return res.status(404).json({
+        success: false,
+        message: 'Project not found.'
       });
     }
 
     // Check for open tickets using BOTH project name and ID reference
     const openTickets = await Ticket.findOne({
       $or: [
-        { 
+        {
           qstClientProjectName: project.projectName,
-          isTicketClosed: false  
+          isTicketClosed: false
         },
-        { 
+        {
           qstProjectID: id,
-          isTicketClosed: false 
+          isTicketClosed: false
         }
       ]
     });
 
     if (openTickets) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Project cannot be deleted as it has associated open tickets.' 
+      return res.status(400).json({
+        success: false,
+        message: 'Project cannot be deleted as it has associated open tickets.'
       });
     }
 
-        // Check for charge rates associated with this project 
+    // Check for charge rates associated with this project 
     const existingChargeRates = await customerChargeRateListModel.findOne({
       project: id
     });
 
     if (existingChargeRates) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Project cannot be deleted it has been associated with one or more charge rates.' 
+      return res.status(400).json({
+        success: false,
+        message: 'Project cannot be deleted it has been associated with one or more charge rates.'
       });
     }
 
     // If no open tickets, proceed with deletion
     await Project.findByIdAndDelete(id);
 
-    res.status(200).json({ 
-      success: true, 
-      message: 'Project deleted successfully.' 
+    res.status(200).json({
+      success: true,
+      message: 'Project deleted successfully.'
     });
   } catch (error) {
     console.error('Delete Project Error:', error);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: 'Server error while deleting project.',
-      error: error.message 
+      error: error.message
     });
   }
 };
@@ -329,12 +328,12 @@ exports.getProjects = async (req, res) => {
     // For both projectName and qstClient fields
     const searchCondition = search
       ? {
-          $or: [
-            { projectName: { $regex: search, $options: "i" } },
-            { "qstClient.companyName": { $regex: search, $options: "i" } },
-            { "qstClient.companyShortName": { $regex: search, $options: "i" } }
-          ]
-        }
+        $or: [
+          { projectName: { $regex: search, $options: "i" } },
+          { "qstClient.companyName": { $regex: search, $options: "i" } },
+          { "qstClient.companyShortName": { $regex: search, $options: "i" } }
+        ]
+      }
       : {};
 
     // 3️⃣ Use aggregation to search + paginate + populate

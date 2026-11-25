@@ -1402,9 +1402,6 @@ async function handleExistingVehicleMediaUpload({
       .json({ message: "vehicleId is required for existing vehicles" });
   }
 
-  console.log(videoURL, "videoURL");
-  // console.log(res,"res")
-  console.log(images, "images");
   // Find the vehicle subdocument
   const vehicleObjectId = new mongoose.Types.ObjectId(vehicleId);
   const vehicle = ticket.vehicleNumbers.id(vehicleObjectId);
@@ -2574,8 +2571,6 @@ exports.VerifySecurityCodeOfTechnicianInFileUpload = async (req, res) => {
   try {
     const { technicianSecurityCode: code, technicianId, ticketId } = req.body;
 
-    console.log(code, technicianId, ticketId, "Incoming payload for verification");
-
     const securityCode1 = await securityCodeModel.findOne({})
     console.log(securityCode1, "securityCode1===================");
 
@@ -2622,7 +2617,6 @@ exports.VerifySecurityCodeOfTechnicianInFileUpload = async (req, res) => {
 exports.getTechDeviceSimAccessories = async (req, res) => {
   try {
     const { technicianId } = req.params;
-    console.log("Technician id : ", technicianId);
 
     // Validate technicianId
     if (!mongoose.Types.ObjectId.isValid(technicianId)) {
