@@ -464,6 +464,7 @@ const createTicket = async (req, res) => {
       const payload = { ...basePayload, ...extraFields };
 
       console.log("[SecondSystem] Payload being sent to .NET system:", JSON.stringify(payload, null, 2));
+      console.log("Hello")
       fetch(dotNetUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -671,7 +672,10 @@ const buildCseClosePayload = async (ticket) => {
       return {
         vehicleNumber: v.vehicleNumber,
         imei: device.deviceId || "",
+        deviceId: device.deviceId || "",
         sim: sim.simNumber || "",
+        simNumber: sim.simNumber || "",
+        mobileNumber: sim.mobileNumber || "",
         deviceType: device.deviceType || device.deviceModel || "",
         Temperature: hasTemperature,
         isDone: v.isDone ?? false,      // ← from freshTicket, not stale caller snapshot
@@ -6753,8 +6757,8 @@ const updateTicket = async (req, res) => {
       { path: "qstProjectID", select: "projectName _id" },
       { path: "spareSwaps" },
       { path: "softCloseByTechnicianComment", select: "reason" },
-      // { path: "issueFoundRef", select: "name description" },
-      // { path: "resolutionRef", select: "name description" },
+      { path: "issueFoundRef", select: "name description" },
+      { path: "resolutionRef", select: "name description" },
     ]);
 
     if (
